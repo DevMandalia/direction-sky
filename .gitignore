@@ -21,3 +21,26 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Google Cloud credentials
+key.json
+*.json.key
+service-account-*.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+/dist
+/build
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db

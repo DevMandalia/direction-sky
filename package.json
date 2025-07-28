@@ -2,43 +2,57 @@
   "name": "direction-sky",
   "version": "0.1.0",
   "private": true,
-  "dependencies": {
-    "@testing-library/dom": "^10.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^13.5.0",
-    "@types/jest": "^27.5.2",
-    "@types/node": "^16.18.126",
-    "@types/react": "^19.1.8",
-    "@types/react-dom": "^19.1.6",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0",
-    "react-scripts": "5.0.1",
-    "typescript": "^4.9.5",
-    "web-vitals": "^2.1.4"
-  },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "dev": "next dev",
+    "build": "./scripts/build.sh",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "deploy": "gcloud functions deploy data-ingestion --runtime nodejs18 --trigger-http --allow-unauthenticated",
+    "deploy:all": "npm run deploy:functions && npm run deploy:scheduler",
+    "deploy:functions": "gcloud functions deploy data-ingestion --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy glassnode-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy coinglass-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy fred-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy binance-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy historical-data --runtime nodejs18 --trigger-http --allow-unauthenticated",
+    "deploy:scheduler": "gcloud scheduler jobs create http data-ingestion-scheduler --schedule=\"*/5 * * * *\" --uri=\"$(gcloud functions describe data-ingestion --format='value(httpsTrigger.url)')\" --http-method=POST",
+    "remove": "gcloud functions delete data-ingestion --quiet && gcloud functions delete glassnode-fetcher --quiet && gcloud functions delete coinglass-fetcher --quiet && gcloud functions delete fred-fetcher --quiet && gcloud functions delete binance-fetcher --quiet && gcloud functions delete historical-data --quiet && gcloud scheduler jobs delete data-ingestion-scheduler --quiet",
+    "logs": "gcloud functions logs read data-ingestion --limit=50",
+    "invoke": "gcloud functions call data-ingestion",
+    "invoke:fred": "gcloud functions call fred-fetcher",
+    "invoke:historical": "gcloud functions call historical-data",
+    "test:ingestion": "node scripts/test-ingestion.js",
+    "test:fred": "node scripts/test-fred.js",
+    "test:fred-simple": "node scripts/test-fred-simple.js",
+    "test:fred-db": "node scripts/test-fred-with-db.js",
+    "test:database": "node scripts/test-database.js",
+    "deploy:script": "./scripts/deploy-gcp.sh",
+    "init:database": "node scripts/init-database.js"
   },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.9.4",
+    "@google-cloud/functions-framework": "^3.3.0",
+    "@headlessui/react": "^1.7.17",
+    "@heroicons/react": "^2.0.18",
+    "@types/node": "^16.18.126",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "autoprefixer": "^10.4.16",
+    "axios": "^1.6.0",
+    "clsx": "^2.0.0",
+    "date-fns": "^2.30.0",
+    "dotenv": "^17.2.1",
+    "framer-motion": "^10.16.4",
+    "ioredis": "^5.6.1",
+    "next": "^14.0.0",
+    "postcss": "^8.4.31",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.8.0",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^4.9.5"
   },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+  "devDependencies": {
+    "@types/ioredis": "^5.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-next": "^14.0.0"
   }
 }
