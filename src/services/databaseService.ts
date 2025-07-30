@@ -647,6 +647,211 @@ export class DatabaseService {
   }
 
   /**
+   * Initialize CoinMarketCap Fear and Greed table
+   */
+  async initializeCoinMarketCapTable(): Promise<void> {
+    try {
+      const dataset = this.bigquery.dataset(this.config.datasetId);
+      const table = dataset.table('coinmarketcap_fear_greed');
+
+      // Check if table exists
+      const [exists] = await table.exists();
+      if (exists) {
+        console.log('Table coinmarketcap_fear_greed already exists');
+        return;
+      }
+
+      // Create table schema for CoinMarketCap Fear and Greed data
+      const schema = [
+        { name: 'timestamp', type: 'TIMESTAMP', mode: 'REQUIRED' },
+        { name: 'value', type: 'INT64', mode: 'REQUIRED' },
+        { name: 'value_classification', type: 'STRING', mode: 'REQUIRED' },
+        { name: 'time_until_update', type: 'INT64', mode: 'REQUIRED' },
+        { name: 'metadata', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' }
+      ];
+
+      const options = {
+        schema,
+        timePartitioning: {
+          type: 'DAY',
+          field: 'timestamp'
+        }
+      };
+
+      await table.create(options);
+      console.log('Table coinmarketcap_fear_greed created successfully');
+    } catch (error) {
+      console.error('Error initializing CoinMarketCap Fear and Greed table:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Store CoinMarketCap Fear and Greed data in BigQuery
+   */
+  async storeCoinMarketCapData(coinmarketcapResponse: any, metricName: string, metadata: any): Promise<void> {
+    try {
+      // Initialize CoinMarketCap table if needed
+      await this.initializeCoinMarketCapTable();
+
+      const row = {
+        timestamp: new Date(coinmarketcapResponse.data.timestamp).toISOString(),
+        value: coinmarketcapResponse.data.value,
+        value_classification: coinmarketcapResponse.data.value_classification,
+        time_until_update: coinmarketcapResponse.data.time_until_update,
+        metadata: JSON.stringify({
+          ...metadata,
+          source: 'coinmarketcap',
+          stored_at: Date.now(),
+          api_credits_used: coinmarketcapResponse.status.credit_count,
+          api_elapsed: coinmarketcapResponse.status.elapsed,
+          api_error_code: coinmarketcapResponse.status.error_code,
+          api_error_message: coinmarketcapResponse.status.error_message
+        }),
+        created_at: new Date().toISOString()
+      };
+
+      const dataset = this.bigquery.dataset(this.config.datasetId);
+      const table = dataset.table('coinmarketcap_fear_greed');
+
+      // Insert data
+      await table.insert([row]);
+      console.log(`Stored CoinMarketCap Fear and Greed data: value=${row.value}, classification=${row.value_classification}`);
+
+      // Cache the latest value
+      if (this.redisClient) {
+        await this.redisClient.setex(
+          `coinmarketcap:fear_greed:latest`,
+          1800, // 30 minute cache
+          JSON.stringify({
+            value: row.value,
+            value_classification: row.value_classification,
+            timestamp: Date.now(),
+            time_until_update: row.time_until_update
+          })
+        );
+      }
+
+    } catch (error) {
+      console.error(`Error storing CoinMarketCap Fear and Greed data:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get latest CoinMarketCap Fear and Greed data
+   */
+  async getLatestCoinMarketCapFearGreed(): Promise<any | null> {
+    // Check cache first
+    if (this.redisClient) {
+      const cached = await this.redisClient.get(`coinmarketcap:fear_greed:latest`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+
+    // Fallback to BigQuery query
+    try {
+      const query = `
+        SELECT 
+          timestamp,
+          value,
+          value_classification,
+          time_until_update,
+          metadata
+        FROM \`${this.config.projectId}.${this.config.datasetId}.coinmarketcap_fear_greed\`
+        ORDER BY timestamp DESC
+        LIMIT 1
+      `;
+
+      const [rows] = await this.bigquery.query({ query });
+
+      if (rows.length === 0) return null;
+
+      const row = rows[0];
+      return {
+        timestamp: new Date(row.timestamp.value || row.timestamp).getTime(),
+        value: row.value,
+        value_classification: row.value_classification,
+        time_until_update: row.time_until_update,
+        metadata: row.metadata ? JSON.parse(row.metadata) : null
+      };
+
+    } catch (error) {
+      console.error(`Error getting latest CoinMarketCap Fear and Greed data:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get historical CoinMarketCap Fear and Greed data
+   */
+  async getHistoricalCoinMarketCapFearGreed(
+    options: QueryOptions = {}
+  ): Promise<any[]> {
+    const cacheKey = `coinmarketcap:fear_greed:history:${JSON.stringify(options)}`;
+    
+    // Check cache first
+    if (this.redisClient) {
+      const cached = await this.redisClient.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+
+    try {
+      const startTime = options.startTime || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30 days ago
+      const endTime = options.endTime || new Date();
+      const limit = options.limit || 1000;
+
+      let query = `
+        SELECT 
+          timestamp,
+          value,
+          value_classification,
+          time_until_update,
+          metadata
+        FROM \`${this.config.projectId}.${this.config.datasetId}.coinmarketcap_fear_greed\`
+        WHERE timestamp >= @startTime
+          AND timestamp <= @endTime
+        ORDER BY timestamp DESC
+        LIMIT @limit
+      `;
+
+      const queryOptions = {
+        query,
+        params: {
+          startTime: startTime.toISOString(),
+          endTime: endTime.toISOString(),
+          limit
+        }
+      };
+
+      const [rows] = await this.bigquery.query(queryOptions);
+
+      const dataPoints = rows.map((row: any) => ({
+        timestamp: new Date(row.timestamp.value || row.timestamp).getTime(),
+        value: row.value,
+        value_classification: row.value_classification,
+        time_until_update: row.time_until_update,
+        metadata: row.metadata ? JSON.parse(row.metadata) : null
+      }));
+
+      // Cache the results
+      if (this.redisClient) {
+        await this.redisClient.setex(cacheKey, 300, JSON.stringify(dataPoints)); // 5 minute cache
+      }
+
+      return dataPoints;
+
+    } catch (error) {
+      console.error(`Error retrieving historical CoinMarketCap Fear and Greed data:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Clean up old data (keep last 2 years)
    */
   async cleanupOldData(): Promise<void> {

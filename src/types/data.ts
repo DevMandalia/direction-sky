@@ -61,6 +61,23 @@ export interface BinanceResponse {
   count: number;
 }
 
+export interface CoinMarketCapFearGreedResponse {
+  data: {
+    value: number;
+    value_classification: string;
+    timestamp: string;
+    time_until_update: number;
+  };
+  status: {
+    timestamp: string;
+    error_code: number;
+    error_message: string | null;
+    elapsed: number;
+    credit_count: number;
+    notice: string | null;
+  };
+}
+
 // Data Source Types
 export interface DataSource {
   name: string;
@@ -347,5 +364,17 @@ export interface StoredXData {
     processing_time: number;
     keywords_tracked: string[];
     accounts_monitored?: string[];
+  };
+}
+
+export interface StoredCoinMarketCapData {
+  timestamp: number;
+  value: number;
+  value_classification: string;
+  time_until_update: number;
+  metadata: {
+    stored_at: number;
+    source: 'coinmarketcap';
+    api_credits_used: number;
   };
 } 

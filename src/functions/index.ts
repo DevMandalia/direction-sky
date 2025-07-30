@@ -4,4 +4,5 @@ export { glassnodeDataFetcher } from './glassnodeDataFetcher';
 export { coinglassDataFetcher } from './coinglassDataFetcher';
 export { fredDataFetcher } from './fredDataFetcher';
 export { binanceDataFetcher } from './binanceDataFetcher';
-export { xDataFetcher } from './xDataFetcher'; 
+export { xDataFetcher } from './xDataFetcher';
+export { coinmarketcapDataFetcher } from './coinmarketcapDataFetcher'; 
