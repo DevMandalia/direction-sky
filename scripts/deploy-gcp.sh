@@ -68,7 +68,7 @@ print_status "Loading environment variables..."
 source .env
 
 # Validate required environment variables
-required_vars=("GLASSNODE_API_KEY" "COINGLASS_API_KEY" "FRED_API_KEY" "PROCESSING_LAYER_URL")
+required_vars=("GLASSNODE_API_KEY" "COINGLASS_API_KEY" "FRED_API_KEY" "PROCESSING_LAYER_URL" "X_API_KEY" "X_API_SECRET" "X_BEARER_TOKEN")
 for var in "${required_vars[@]}"; do
     if [ -z "${!var}" ]; then
         print_error "Required environment variable $var is not set."
@@ -94,7 +94,7 @@ gcloud services enable cloudscheduler.googleapis.com
 gcloud services enable cloudbuild.googleapis.com
 
 # Set environment variables for Cloud Functions
-ENV_VARS="GLASSNODE_API_KEY=$GLASSNODE_API_KEY,COINGLASS_API_KEY=$COINGLASS_API_KEY,FRED_API_KEY=$FRED_API_KEY,BINANCE_API_KEY=$BINANCE_API_KEY,BINANCE_SECRET_KEY=$BINANCE_SECRET_KEY,PROCESSING_LAYER_URL=$PROCESSING_LAYER_URL"
+ENV_VARS="GLASSNODE_API_KEY=$GLASSNODE_API_KEY,COINGLASS_API_KEY=$COINGLASS_API_KEY,FRED_API_KEY=$FRED_API_KEY,BINANCE_API_KEY=$BINANCE_API_KEY,BINANCE_SECRET_KEY=$BINANCE_SECRET_KEY,PROCESSING_LAYER_URL=$PROCESSING_LAYER_URL,X_API_KEY=$X_API_KEY,X_API_SECRET=$X_API_SECRET,X_BEARER_TOKEN=$X_BEARER_TOKEN,X_MAX_ACCOUNTS=${X_MAX_ACCOUNTS:-23}"
 
 # Deploy Cloud Functions
 print_status "Deploying Cloud Functions..."
@@ -160,6 +160,18 @@ gcloud functions deploy binance-fetcher \
     --set-env-vars $ENV_VARS \
     --memory 256MB \
     --timeout 300s
+
+print_status "Deploying x-fetcher function..."
+gcloud functions deploy x-fetcher \
+    --runtime nodejs18 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --region $REGION \
+    --project $PROJECT_ID \
+    --entry-point x-fetcher \
+    --set-env-vars $ENV_VARS \
+    --memory 512MB \
+    --timeout 540s
 
 # Get the function URL for the scheduler
 print_status "Getting function URL for scheduler..."

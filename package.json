@@ -10,18 +10,22 @@
     "type-check": "tsc --noEmit",
     "deploy": "gcloud functions deploy data-ingestion --runtime nodejs18 --trigger-http --allow-unauthenticated",
     "deploy:all": "npm run deploy:functions && npm run deploy:scheduler",
-    "deploy:functions": "gcloud functions deploy data-ingestion --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy glassnode-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy coinglass-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy fred-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy binance-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy historical-data --runtime nodejs18 --trigger-http --allow-unauthenticated",
+    "deploy:functions": "gcloud functions deploy data-ingestion --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy glassnode-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy coinglass-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy fred-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy binance-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy x-fetcher --runtime nodejs18 --trigger-http --allow-unauthenticated && gcloud functions deploy historical-data --runtime nodejs18 --trigger-http --allow-unauthenticated",
     "deploy:scheduler": "gcloud scheduler jobs create http data-ingestion-scheduler --schedule=\"*/5 * * * *\" --uri=\"$(gcloud functions describe data-ingestion --format='value(httpsTrigger.url)')\" --http-method=POST",
-    "remove": "gcloud functions delete data-ingestion --quiet && gcloud functions delete glassnode-fetcher --quiet && gcloud functions delete coinglass-fetcher --quiet && gcloud functions delete fred-fetcher --quiet && gcloud functions delete binance-fetcher --quiet && gcloud functions delete historical-data --quiet && gcloud scheduler jobs delete data-ingestion-scheduler --quiet",
+    "remove": "gcloud functions delete data-ingestion --quiet && gcloud functions delete glassnode-fetcher --quiet && gcloud functions delete coinglass-fetcher --quiet && gcloud functions delete fred-fetcher --quiet && gcloud functions delete binance-fetcher --quiet && gcloud functions delete x-fetcher --quiet && gcloud functions delete historical-data --quiet && gcloud scheduler jobs delete data-ingestion-scheduler --quiet",
     "logs": "gcloud functions logs read data-ingestion --limit=50",
     "invoke": "gcloud functions call data-ingestion",
     "invoke:fred": "gcloud functions call fred-fetcher",
+    "invoke:x": "gcloud functions call x-fetcher",
     "invoke:historical": "gcloud functions call historical-data",
     "test:ingestion": "node scripts/test-ingestion.js",
     "test:fred": "node scripts/test-fred.js",
     "test:fred-simple": "node scripts/test-fred-simple.js",
     "test:fred-db": "node scripts/test-fred-with-db.js",
     "test:database": "node scripts/test-database.js",
+    "test:x-sentiment": "node scripts/test-x-sentiment.js",
+    "run:x-fetcher": "node scripts/run-x-fetcher.js",
+    "query:x-data": "node scripts/query-x-data.js",
     "deploy:script": "./scripts/deploy-gcp.sh",
     "init:database": "node scripts/init-database.js"
   },
@@ -40,7 +44,7 @@
     "dotenv": "^17.2.1",
     "framer-motion": "^10.16.4",
     "ioredis": "^5.6.1",
-    "next": "^14.0.0",
+    "next": "^13.4.19",
     "postcss": "^8.4.31",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -53,6 +57,6 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.0.0",
-    "eslint-config-next": "^14.0.0"
+    "eslint-config-next": "^13.4.19"
   }
 }

@@ -6,10 +6,12 @@ const { glassnodeDataFetcher } = require('./dist/functions/glassnodeDataFetcher'
 const { coinglassDataFetcher } = require('./dist/functions/coinglassDataFetcher');
 const { fredDataFetcher } = require('./dist/functions/fredDataFetcher');
 const { binanceDataFetcher } = require('./dist/functions/binanceDataFetcher');
+const { xDataFetcher } = require('./dist/functions/xDataFetcher');
 
 // Register HTTP functions
 functions.http('data-ingestion', dataIngestion);
 functions.http('glassnode-fetcher', glassnodeDataFetcher);
 functions.http('coinglass-fetcher', coinglassDataFetcher);
 functions.http('fred-fetcher', fredDataFetcher);
-functions.http('binance-fetcher', binanceDataFetcher); 
+functions.http('binance-fetcher', binanceDataFetcher);
+functions.http('x-fetcher', xDataFetcher); 

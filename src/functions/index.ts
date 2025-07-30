@@ -3,4 +3,5 @@ export { dataIngestion } from './dataIngestion';
 export { glassnodeDataFetcher } from './glassnodeDataFetcher';
 export { coinglassDataFetcher } from './coinglassDataFetcher';
 export { fredDataFetcher } from './fredDataFetcher';
-export { binanceDataFetcher } from './binanceDataFetcher'; 
+export { binanceDataFetcher } from './binanceDataFetcher';
+export { xDataFetcher } from './xDataFetcher'; 

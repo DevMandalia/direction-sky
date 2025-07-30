@@ -8,7 +8,7 @@ Direction Sky follows a **serverless-first** architecture with the following com
 
 ### 1. Data Ingestion Layer (The Collectors)
 - **Technology**: Google Cloud Functions + Cloud Scheduler
-- **Purpose**: Fetches economic data from FRED API (29+ metrics) with real-time database storage
+- **Purpose**: Fetches economic data from FRED API (29+ metrics) and social sentiment from X (Twitter) with real-time database storage
 - **Benefits**: Cost-effective, reliable, no server management, automatic scaling
 
 ### 2. Data Processing & Storage Layer (The Brain)
@@ -31,8 +31,9 @@ Direction Sky follows a **serverless-first** architecture with the following com
 
 ### 5. External Services
 - **FRED API**: Federal Reserve Economic Data (29+ economic indicators)
+- **X (Twitter) API**: Social sentiment analysis for Bitcoin and crypto markets
 - **Google Cloud**: BigQuery, Cloud Functions, Cloud Scheduler
-- **Benefits**: Reliable data source, managed infrastructure
+- **Benefits**: Reliable data sources, managed infrastructure, comprehensive market intelligence
 
 ## 🚀 Getting Started
 
@@ -42,6 +43,7 @@ Direction Sky follows a **serverless-first** architecture with the following com
 - Git
 - Google Cloud Platform account
 - FRED API key
+- X (Twitter) API credentials (optional for social sentiment analysis)
 
 ### Installation
 
@@ -220,20 +222,39 @@ NEXT_PUBLIC_API_URL=your_api_url
 ## 📊 Features
 
 ### Current Features
-- ✅ Real-time market data display
+- ✅ Real-time FRED economic data (29+ metrics)
+- ✅ X (Twitter) social sentiment analysis
+- ✅ Bitcoin keyword tracking and analysis
+- ✅ Influential account monitoring
+- ✅ Engagement metrics and sentiment scoring
 - ✅ Responsive dashboard design
-- ✅ Alert system UI
 - ✅ Modern, dark theme
 - ✅ TypeScript support
+- ✅ BigQuery data storage and analytics
+- ✅ Redis caching for performance
+
+### Data Sources
+- **FRED API**: Federal Reserve Economic Data
+  - Interest rates, employment, GDP, inflation, money supply
+  - Housing, consumer spending, manufacturing, trade
+  - Financial markets, currency exchange rates
+- **X (Twitter) API**: Social Sentiment Intelligence
+  - Bitcoin-related keyword tracking
+  - Influential account sentiment analysis
+  - Engagement metrics (likes, retweets, replies)
+  - Real-time sentiment scoring and classification
 
 ### Planned Features
 - 🔄 Live price charts with TradingView integration
-- 🔄 Confluence alert processing
+- 🔄 Advanced sentiment analysis with ML models
+- 🔄 Real-time streaming capabilities
 - 🔄 Email notification system
-- 🔄 Historical data analysis
-- 🔄 Custom alert rules
-- 🔄 Portfolio tracking
+- 🔄 Historical sentiment trend analysis
+- 🔄 Custom alert rules and thresholds
+- 🔄 Portfolio tracking and optimization
 - 🔄 API rate limiting and caching
+- 🔄 Geographic sentiment analysis
+- 🔄 Predictive sentiment modeling
 
 ## 🤝 Contributing
 

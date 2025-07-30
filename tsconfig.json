@@ -20,7 +20,7 @@
     "isolatedModules": true,
     "noEmit": false,
     "outDir": "./dist",
-    "jsx": "react-jsx",
+    "jsx": "preserve",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -32,13 +32,22 @@
     "noImplicitReturns": true,
     "baseUrl": "./",
     "paths": {
-      "@/*": ["src/*"]
-    }
+      "@/*": [
+        "src/*"
+      ]
+    },
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
     "src/functions/**/*",
     "src/types/**/*",
-    "src/utils/**/*"
+    "src/utils/**/*",
+    ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",

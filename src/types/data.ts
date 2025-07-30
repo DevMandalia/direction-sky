@@ -200,7 +200,7 @@ export const FRED_METRICS: MetricDefinition[] = [
     endpoint: '/series/observations',
     parameters: { series_id: 'GDP' }
   }
-]; 
+];
 
 // Historical Data Types
 export interface HistoricalDataPoint {
@@ -259,4 +259,93 @@ export interface TrendAnalysis {
   latestValue?: number;
   earliestValue?: number;
   error?: string;
+}
+
+// X (Twitter) Data Types
+export interface XPost {
+  id: string;
+  text: string;
+  author_id: string;
+  author_username: string;
+  created_at: string;
+  public_metrics: {
+    retweet_count: number;
+    reply_count: number;
+    like_count: number;
+    quote_count: number;
+  };
+  sentiment: {
+    score: number;
+    label: 'positive' | 'negative' | 'neutral';
+    confidence: number;
+    keywords_found: string[];
+  };
+  entities: {
+    hashtags: string[];
+    mentions: string[];
+    urls: string[];
+  };
+}
+
+export interface XSentimentAnalysis {
+  positive_count: number;
+  negative_count: number;
+  neutral_count: number;
+  average_sentiment_score: number;
+  sentiment_distribution: {
+    very_positive: number;
+    positive: number;
+    neutral: number;
+    negative: number;
+    very_negative: number;
+  };
+}
+
+export interface XEngagementMetrics {
+  total_likes: number;
+  total_retweets: number;
+  total_replies: number;
+  total_quotes: number;
+  average_engagement_rate: number;
+}
+
+export interface XKeywordAnalysis {
+  keyword_frequency: Record<string, number>;
+  trending_keywords: string[];
+}
+
+export interface XSentimentData {
+  source: 'x_search' | 'x_account';
+  query: string;
+  timestamp: number;
+  total_tweets: number;
+  sentiment_analysis: XSentimentAnalysis;
+  engagement_metrics: XEngagementMetrics;
+  keyword_analysis: XKeywordAnalysis;
+  top_tweets: XPost[];
+}
+
+export interface XAggregatedSentiment {
+  overall_sentiment_score: number;
+  overall_sentiment_label: 'positive' | 'negative' | 'neutral';
+  total_tweets_analyzed: number;
+  sentiment_confidence: number;
+  timestamp: number;
+}
+
+export interface StoredXData {
+  source: string;
+  query: string;
+  timestamp: number;
+  total_tweets: number;
+  sentiment_analysis: XSentimentAnalysis;
+  engagement_metrics: XEngagementMetrics;
+  keyword_analysis: XKeywordAnalysis;
+  top_tweets: XPost[];
+  metadata: {
+    stored_at: number;
+    processing_time: number;
+    keywords_tracked: string[];
+    accounts_monitored?: string[];
+  };
 } 

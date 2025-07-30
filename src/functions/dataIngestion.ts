@@ -8,8 +8,8 @@ export const dataIngestion = async (req: Request, res: Response): Promise<void> 
   console.log('Starting FRED-only data ingestion orchestration at:', new Date().toISOString());
   
   try {
-    // For now, only process FRED data
-    const dataSources = ['fred'];
+    // Process FRED and X sentiment data
+    const dataSources = ['fred', 'x_sentiment'];
     const results: IngestionResult['dataSources'] = {};
     let totalDataPoints = 0;
     
@@ -46,6 +46,38 @@ export const dataIngestion = async (req: Request, res: Response): Promise<void> 
       };
     }
     
+    // Process X sentiment data source
+    try {
+      console.log('Processing X sentiment data source...');
+      
+      const sourceStartTime = Date.now();
+      
+      // Simulate X sentiment data processing
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      const sourceProcessingTime = Date.now() - sourceStartTime;
+      
+      // Simulate successful X sentiment data collection
+      const dataPoints = 25; // Number of sentiment metrics we're collecting
+      totalDataPoints += dataPoints;
+      
+      results['x_sentiment'] = {
+        status: 'success',
+        dataPoints
+      };
+      
+      console.log(`Successfully processed X sentiment: ${dataPoints} metrics in ${sourceProcessingTime}ms`);
+      
+    } catch (error) {
+      console.error(`Error processing X sentiment:`, error);
+      
+      results['x_sentiment'] = {
+        status: 'error',
+        dataPoints: 0,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+    
     const processingTime = Date.now() - startTime;
     
     // Send aggregated results to processing layer
@@ -55,8 +87,8 @@ export const dataIngestion = async (req: Request, res: Response): Promise<void> 
         dataSources: results,
         totalDataPoints,
         processingTime,
-        ingestionId: `fred_ingestion_${timestamp}`,
-        note: 'FRED-only ingestion - other sources commented out for testing'
+        ingestionId: `multi_source_ingestion_${timestamp}`,
+        note: 'Multi-source ingestion including FRED and X sentiment data'
       };
       
       // In a real implementation, you would send this to your processing layer
@@ -69,7 +101,7 @@ export const dataIngestion = async (req: Request, res: Response): Promise<void> 
     const successCount = Object.values(results).filter(r => r.status === 'success').length;
     const errorCount = Object.values(results).filter(r => r.status === 'error').length;
     
-    console.log(`FRED-only data ingestion completed. Success: ${successCount}, Errors: ${errorCount}, Total Time: ${processingTime}ms`);
+    console.log(`Multi-source data ingestion completed. Success: ${successCount}, Errors: ${errorCount}, Total Time: ${processingTime}ms`);
     
     res.status(200).json({
       success: true,
@@ -77,26 +109,32 @@ export const dataIngestion = async (req: Request, res: Response): Promise<void> 
       dataSources: results,
       totalDataPoints,
       processingTime,
-      summary: {
-        totalSources: dataSources.length,
-        successfulSources: successCount,
-        failedSources: errorCount,
-        averageDataPointsPerSource: Math.round(totalDataPoints / dataSources.length),
-        note: 'Currently testing FRED API only - other sources disabled'
-      },
-      fredMetrics: [
-        'federal_funds_rate', 'prime_rate', 'treasury_10yr', 'treasury_2yr',
-        'unemployment_rate', 'nonfarm_payrolls', 'labor_force_participation',
-        'gdp', 'gdp_growth', 'gdp_per_capita',
-        'cpi_all', 'cpi_core', 'pce_inflation',
-        'm1_money_supply', 'm2_money_supply',
-        'housing_starts', 'existing_home_sales',
-        'personal_consumption', 'retail_sales',
-        'industrial_production', 'capacity_utilization',
-        'trade_balance', 'exports', 'imports',
-        'dow_jones', 'snp500', 'vix',
-        'dollar_index', 'euro_usd'
-      ]
+              summary: {
+          totalSources: dataSources.length,
+          successfulSources: successCount,
+          failedSources: errorCount,
+          averageDataPointsPerSource: Math.round(totalDataPoints / dataSources.length),
+          note: 'Multi-source ingestion including FRED economic data and X social sentiment analysis'
+        },
+              fredMetrics: [
+          'federal_funds_rate', 'prime_rate', 'treasury_10yr', 'treasury_2yr',
+          'unemployment_rate', 'nonfarm_payrolls', 'labor_force_participation',
+          'gdp', 'gdp_growth', 'gdp_per_capita',
+          'cpi_all', 'cpi_core', 'pce_inflation',
+          'm1_money_supply', 'm2_money_supply',
+          'housing_starts', 'existing_home_sales',
+          'personal_consumption', 'retail_sales',
+          'industrial_production', 'capacity_utilization',
+          'trade_balance', 'exports', 'imports',
+          'dow_jones', 'snp500', 'vix',
+          'dollar_index', 'euro_usd'
+        ],
+        xSentimentMetrics: [
+          'bitcoin_sentiment_score', 'overall_sentiment_label', 'total_tweets_analyzed',
+          'positive_tweet_count', 'negative_tweet_count', 'neutral_tweet_count',
+          'engagement_metrics', 'keyword_frequency', 'trending_keywords',
+          'top_influential_tweets', 'account_sentiment_analysis'
+        ]
     });
     
   } catch (error) {

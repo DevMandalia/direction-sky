@@ -500,6 +500,153 @@ export class DatabaseService {
   }
 
   /**
+   * Initialize X sentiment data table
+   */
+  async initializeXTable(): Promise<void> {
+    try {
+      const dataset = this.bigquery.dataset(this.config.datasetId);
+      const table = dataset.table('x_sentiment_data');
+
+      // Check if table exists
+      const [exists] = await table.exists();
+      if (exists) {
+        console.log('Table x_sentiment_data already exists');
+        return;
+      }
+
+      // Create table schema for X sentiment data
+      const schema = [
+        { name: 'timestamp', type: 'TIMESTAMP', mode: 'REQUIRED' },
+        { name: 'source', type: 'STRING', mode: 'REQUIRED' },
+        { name: 'query', type: 'STRING', mode: 'REQUIRED' },
+        { name: 'total_tweets', type: 'INT64', mode: 'REQUIRED' },
+        { name: 'sentiment_analysis', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'engagement_metrics', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'keyword_analysis', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'top_tweets', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'metadata', type: 'JSON', mode: 'REQUIRED' },
+        { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' }
+      ];
+
+      const options = {
+        schema,
+        timePartitioning: {
+          type: 'DAY',
+          field: 'timestamp'
+        }
+      };
+
+      await table.create(options);
+      console.log('Table x_sentiment_data created successfully');
+    } catch (error) {
+      console.error('Error initializing X sentiment table:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Store X sentiment data in BigQuery
+   */
+  async storeXData(xSentimentData: any, metricName: string): Promise<void> {
+    try {
+      // Initialize X table if needed
+      await this.initializeXTable();
+
+      const row = {
+        timestamp: new Date(xSentimentData.timestamp).toISOString(),
+        source: xSentimentData.source,
+        query: xSentimentData.query,
+        total_tweets: xSentimentData.total_tweets,
+        sentiment_analysis: JSON.stringify(xSentimentData.sentiment_analysis),
+        engagement_metrics: JSON.stringify(xSentimentData.engagement_metrics),
+        keyword_analysis: JSON.stringify(xSentimentData.keyword_analysis),
+        top_tweets: JSON.stringify(xSentimentData.top_tweets),
+        metadata: JSON.stringify({
+          metric_name: metricName,
+          stored_at: Date.now(),
+          processing_time: 0,
+          keywords_tracked: ['bitcoin', 'btc', 'hodl', 'diamond hands', 'paper hands'],
+          accounts_monitored: xSentimentData.source === 'x_account' ? [xSentimentData.query] : undefined
+        }),
+        created_at: new Date().toISOString()
+      };
+
+      const dataset = this.bigquery.dataset(this.config.datasetId);
+      const table = dataset.table('x_sentiment_data');
+
+      // Insert data
+      await table.insert([row]);
+      console.log(`Stored X sentiment data for ${metricName}`);
+
+      // Cache the latest sentiment score
+      if (this.redisClient) {
+        await this.redisClient.setex(
+          `x_sentiment:${metricName}:latest`,
+          1800, // 30 minute cache
+          JSON.stringify({
+            sentiment_score: xSentimentData.sentiment_analysis.average_sentiment_score,
+            total_tweets: xSentimentData.total_tweets,
+            timestamp: Date.now()
+          })
+        );
+      }
+
+    } catch (error) {
+      console.error(`Error storing X sentiment data for ${metricName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get latest X sentiment data
+   */
+  async getLatestXSentiment(metricName: string): Promise<any | null> {
+    // Check cache first
+    if (this.redisClient) {
+      const cached = await this.redisClient.get(`x_sentiment:${metricName}:latest`);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+
+    // Fallback to BigQuery query
+    try {
+      const query = `
+        SELECT 
+          timestamp,
+          sentiment_analysis,
+          engagement_metrics,
+          keyword_analysis,
+          total_tweets
+        FROM \`${this.config.projectId}.${this.config.datasetId}.x_sentiment_data\`
+        WHERE query = @metricName
+        ORDER BY timestamp DESC
+        LIMIT 1
+      `;
+
+      const [rows] = await this.bigquery.query({
+        query,
+        params: { metricName }
+      });
+
+      if (rows.length === 0) return null;
+
+      const row = rows[0];
+      return {
+        timestamp: new Date(row.timestamp.value || row.timestamp).getTime(),
+        sentiment_analysis: JSON.parse(row.sentiment_analysis),
+        engagement_metrics: JSON.parse(row.engagement_metrics),
+        keyword_analysis: JSON.parse(row.keyword_analysis),
+        total_tweets: row.total_tweets
+      };
+
+    } catch (error) {
+      console.error(`Error getting latest X sentiment for ${metricName}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Clean up old data (keep last 2 years)
    */
   async cleanupOldData(): Promise<void> {
