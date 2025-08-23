@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
-    "target": "es2020",
+    "target": "ES2022",
     "lib": [
       "dom",
       "dom.iterable",
       "esnext",
-      "es2020"
+      "ES2022"
     ],
     "allowJs": true,
     "skipLibCheck": true,
@@ -20,6 +20,7 @@
     "isolatedModules": true,
     "noEmit": false,
     "outDir": "./dist",
+    "rootDir": "./src",
     "jsx": "preserve",
     "declaration": true,
     "declarationMap": true,
@@ -44,9 +45,10 @@
     ]
   },
   "include": [
-    "src/functions/**/*",
+    "src/services/**/*",
     "src/types/**/*",
     "src/utils/**/*",
+    "src/functions/**/*",
     ".next/types/**/*.ts"
   ],
   "exclude": [
