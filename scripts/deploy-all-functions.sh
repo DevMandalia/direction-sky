@@ -237,20 +237,6 @@ gcloud functions deploy polygon-health-check \
     --memory 128MB \
     --timeout 60s
 
-# Deploy simple test function
-print_status "Deploying simple-test function..."
-gcloud functions deploy simple-test \
-    --runtime nodejs24 \
-    --trigger-http \
-    --allow-unauthenticated \
-    --region $REGION \
-    --project $PROJECT_ID \
-    --source src/functions \
-    --entry-point simpleTest \
-    --set-env-vars $ENV_VARS \
-    --memory 128MB \
-    --timeout 60s
-
 # Deploy X data fetcher function
 print_status "Deploying x-fetcher function..."
 gcloud functions deploy x-fetcher \

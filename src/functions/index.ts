@@ -7,5 +7,3 @@ export { binanceDataFetcher } from './binanceDataFetcher';
 export { xDataFetcher } from './xDataFetcher';
 export { coinmarketcapDataFetcher } from './coinmarketcapDataFetcher';
 export { polygonOptionsDataFetcher, polygonHealthCheck } from './polygonOptionsDataFetcher';
-export { simpleTest } from './simpleTest';
-export { polygonTest } from './polygonTest'; 

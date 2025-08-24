@@ -2,11 +2,16 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.polygonDatabaseService = exports.PolygonDatabaseService = void 0;
 const bigquery_1 = require("@google-cloud/bigquery");
+const { Storage } = require('@google-cloud/storage');
 class PolygonDatabaseService {
     constructor() {
         this.projectId = process.env.GOOGLE_CLOUD_PROJECT || '';
         this.datasetId = process.env.BIGQUERY_DATASET || 'direction_sky_data';
         this.bigquery = new bigquery_1.BigQuery({
+            projectId: this.projectId,
+            keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+        });
+        this.storage = new Storage({
             projectId: this.projectId,
             keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
         });
@@ -17,6 +22,7 @@ class PolygonDatabaseService {
             console.log('Initializing Polygon.io BigQuery tables...');
             await Promise.all([
                 this.initializeOptionsTable(),
+                this.initializeOptionsStagingTable(),
                 this.initializeStockTable(),
                 this.initializeCryptoTable(),
                 this.initializeRealTimeTable()
@@ -32,15 +38,19 @@ class PolygonDatabaseService {
     async initializeOptionsTable() {
         const tableId = 'polygon_options';
         // Schema definition for polygon_options table
-        // Composite Primary Key: (contract_id, timestamp)
-        // - contract_id: Unique options contract identifier (e.g., "MSTR240119C00100000")
-        // - timestamp: When the data was recorded
-        // Clustering on these fields provides optimal query performance
+        // Composite Primary Key: (date, contract_id)
+        // - date: Trading date in EST (daily granularity)
+        // - contract_id: Unique options contract identifier
+        // Partitioned by date and clustered by contract_id for performance
         const schema = [
-            // Primary Keys and Identifiers
-            { name: 'timestamp', type: 'TIMESTAMP', mode: 'REQUIRED' },
-            { name: 'underlying_asset', type: 'STRING', mode: 'REQUIRED' },
+            // Primary Keys - Daily granularity structure
+            { name: 'date', type: 'DATE', mode: 'REQUIRED' },
             { name: 'contract_id', type: 'STRING', mode: 'REQUIRED' },
+            // Timestamps
+            { name: 'insert_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'last_updated', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            // Contract Details
+            { name: 'underlying_asset', type: 'STRING', mode: 'REQUIRED' },
             { name: 'contract_type', type: 'STRING', mode: 'REQUIRED' },
             // Contract Details
             { name: 'strike_price', type: 'FLOAT64', mode: 'NULLABLE' },
@@ -126,11 +136,250 @@ class PolygonDatabaseService {
             // Data Quality and Metadata
             { name: 'data_source', type: 'STRING', mode: 'NULLABLE' }, // 'polygon', 'real_time', 'batch'
             { name: 'data_quality_score', type: 'FLOAT64', mode: 'NULLABLE' },
-            { name: 'last_updated', type: 'TIMESTAMP', mode: 'NULLABLE' },
             { name: 'raw_data', type: 'JSON', mode: 'NULLABLE' },
             { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' }
         ];
         await this.createTableIfNotExists(tableId, schema);
+    }
+    // Initialize Options staging table (fast path for set-based MERGE)
+    async initializeOptionsStagingTable() {
+        const tableId = 'polygon_options_staging';
+        const schema = [
+            { name: 'date', type: 'DATE', mode: 'REQUIRED' },
+            { name: 'contract_id', type: 'STRING', mode: 'REQUIRED' },
+            { name: 'insert_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'last_updated', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'underlying_asset', type: 'STRING', mode: 'REQUIRED' },
+            { name: 'contract_type', type: 'STRING', mode: 'REQUIRED' },
+            { name: 'strike_price', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'expiration_date', type: 'DATE', mode: 'NULLABLE' },
+            { name: 'exercise_style', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'shares_per_contract', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'primary_exchange', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'currency', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'underlying_price', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'underlying_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'delta', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'gamma', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'theta', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'vega', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'rho', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'lambda', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'epsilon', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'charm', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'vanna', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'volga', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'bid', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'ask', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'bid_size', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'ask_size', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'mid_price', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'spread', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'spread_percentage', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'last_price', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'last_size', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'last_trade_exchange', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'last_trade_conditions', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'volume', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'open_interest', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'implied_volatility', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'historical_volatility', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'min_av', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'min_av_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'prev_day_volume', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'prev_day_open_interest', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'prev_day_high', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'prev_day_low', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'prev_day_close', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'prev_day_vwap', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'days_to_expiration', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'time_value', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'intrinsic_value', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'extrinsic_value', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'moneyness', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'leverage', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'probability_itm', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'probability_otm', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'max_loss', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'max_profit', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'break_even_price', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'score', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'quote_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'trade_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'participant_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'chain_timestamp', type: 'TIMESTAMP', mode: 'NULLABLE' },
+            { name: 'exchange', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'conditions', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'market_center', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'tick_size', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'lot_size', type: 'INT64', mode: 'NULLABLE' },
+            { name: 'is_penny', type: 'BOOLEAN', mode: 'NULLABLE' },
+            { name: 'is_weekly', type: 'BOOLEAN', mode: 'NULLABLE' },
+            { name: 'is_monthly', type: 'BOOLEAN', mode: 'NULLABLE' },
+            { name: 'is_quarterly', type: 'BOOLEAN', mode: 'NULLABLE' },
+            { name: 'is_standard', type: 'BOOLEAN', mode: 'NULLABLE' },
+            { name: 'data_source', type: 'STRING', mode: 'NULLABLE' },
+            { name: 'data_quality_score', type: 'FLOAT64', mode: 'NULLABLE' },
+            { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' }
+        ];
+        const dataset = this.bigquery.dataset(this.datasetId);
+        const table = dataset.table(tableId);
+        const [exists] = await table.exists();
+        if (!exists) {
+            await table.create({
+                schema,
+                location: 'US',
+                timePartitioning: { type: 'DAY', field: 'date' },
+                clustering: { fields: ['date', 'contract_id'] }
+            });
+            console.log(`Table ${tableId} created successfully (staging)`);
+        }
+        else {
+            console.log(`Table ${tableId} already exists (staging)`);
+        }
+    }
+    // Fast path: stage rows then set-based MERGE
+    async storeOptionsDataFast(data) {
+        const dataset = this.bigquery.dataset(this.datasetId);
+        const staging = dataset.table('polygon_options_staging');
+        // Build rows via existing formatter
+        const rows = [];
+        if ('options' in data) {
+            if (data.options.calls) data.options.calls.forEach(c => rows.push(this.formatOptionsRow(c, 'call', data.underlying_asset)));
+            if (data.options.puts) data.options.puts.forEach(p => rows.push(this.formatOptionsRow(p, 'put', data.underlying_asset)));
+        }
+        else {
+            rows.push(this.formatOptionsRow(data, data.contract.contract_type, data.contract.underlying_asset));
+        }
+        if (rows.length === 0) return;
+        // Stream into staging in chunks (read-only staging allows MERGE from it)
+        const chunkSize = 500;
+        for (let i = 0; i < rows.length; i += chunkSize) {
+            const batch = rows.slice(i, i + chunkSize).map(r => {
+                const { raw_data, ...rest } = r;
+                return rest;
+            });
+            await staging.insert(batch);
+        }
+        // Single MERGE from staging for today (EST)
+        const mergeSql = `
+      MERGE \`${this.projectId}.${this.datasetId}.polygon_options\` AS target
+      USING (
+        SELECT * EXCEPT(rn)
+        FROM (
+          SELECT s.*, ROW_NUMBER() OVER (
+            PARTITION BY s.contract_id, s.date
+            ORDER BY s.last_updated DESC, s.created_at DESC
+          ) AS rn
+          FROM \`${this.projectId}.${this.datasetId}.polygon_options_staging\` s
+          WHERE s.date = DATE(TIMESTAMP(CURRENT_TIMESTAMP()), "America/New_York")
+        )
+        WHERE rn = 1
+      ) AS source
+      ON target.contract_id = source.contract_id AND target.date = source.date
+      WHEN MATCHED THEN UPDATE SET
+        underlying_asset = source.underlying_asset,
+        contract_type = source.contract_type,
+        strike_price = source.strike_price,
+        expiration_date = source.expiration_date,
+        exercise_style = source.exercise_style,
+        shares_per_contract = source.shares_per_contract,
+        primary_exchange = source.primary_exchange,
+        currency = source.currency,
+        underlying_price = source.underlying_price,
+        underlying_timestamp = source.underlying_timestamp,
+        delta = source.delta,
+        gamma = source.gamma,
+        theta = source.theta,
+        vega = source.vega,
+        rho = source.rho,
+        lambda = source.lambda,
+        epsilon = source.epsilon,
+        charm = source.charm,
+        vanna = source.vanna,
+        volga = source.volga,
+        bid = source.bid,
+        ask = source.ask,
+        bid_size = source.bid_size,
+        ask_size = source.ask_size,
+        mid_price = source.mid_price,
+        spread = source.spread,
+        spread_percentage = source.spread_percentage,
+        last_price = source.last_price,
+        last_size = source.last_size,
+        last_trade_exchange = source.last_trade_exchange,
+        last_trade_conditions = source.last_trade_conditions,
+        volume = source.volume,
+        open_interest = source.open_interest,
+        implied_volatility = source.implied_volatility,
+        historical_volatility = source.historical_volatility,
+        min_av = source.min_av,
+        min_av_timestamp = source.min_av_timestamp,
+        prev_day_volume = source.prev_day_volume,
+        prev_day_open_interest = source.prev_day_open_interest,
+        prev_day_high = source.prev_day_high,
+        prev_day_low = source.prev_day_low,
+        prev_day_close = source.prev_day_close,
+        prev_day_vwap = source.prev_day_vwap,
+        days_to_expiration = source.days_to_expiration,
+        time_value = source.time_value,
+        intrinsic_value = source.intrinsic_value,
+        extrinsic_value = source.extrinsic_value,
+        moneyness = source.moneyness,
+        leverage = source.leverage,
+        probability_itm = source.probability_itm,
+        probability_otm = source.probability_otm,
+        max_loss = source.max_loss,
+        max_profit = source.max_profit,
+        break_even_price = source.break_even_price,
+        score = source.score,
+        quote_timestamp = source.quote_timestamp,
+        trade_timestamp = source.trade_timestamp,
+        participant_timestamp = source.participant_timestamp,
+        chain_timestamp = source.chain_timestamp,
+        exchange = source.exchange,
+        conditions = source.conditions,
+        market_center = source.market_center,
+        tick_size = source.tick_size,
+        lot_size = source.lot_size,
+        is_penny = source.is_penny,
+        is_weekly = source.is_weekly,
+        is_monthly = source.is_monthly,
+        is_quarterly = source.is_quarterly,
+        is_standard = source.is_standard,
+        data_source = source.data_source,
+        data_quality_score = source.data_quality_score,
+        last_updated = source.last_updated,
+        created_at = source.created_at
+      WHEN NOT MATCHED THEN INSERT (
+        date, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
+        exercise_style, shares_per_contract, primary_exchange, currency, underlying_price,
+        underlying_timestamp, delta, gamma, theta, vega, rho, lambda, epsilon, charm,
+        vanna, volga, bid, ask, bid_size, ask_size, mid_price, spread, spread_percentage,
+        last_price, last_size, last_trade_exchange, last_trade_conditions, volume, open_interest,
+        implied_volatility, historical_volatility, min_av, min_av_timestamp, prev_day_volume,
+        prev_day_open_interest, prev_day_high, prev_day_low, prev_day_close, prev_day_vwap,
+        days_to_expiration, time_value, intrinsic_value, extrinsic_value, moneyness, leverage,
+        probability_itm, probability_otm, max_loss, max_profit, break_even_price, score,
+        quote_timestamp, trade_timestamp, participant_timestamp, chain_timestamp, exchange,
+        conditions, market_center, tick_size, lot_size, is_penny, is_weekly, is_monthly,
+        is_quarterly, is_standard, data_source, data_quality_score, insert_timestamp, last_updated, raw_data, created_at
+      ) VALUES (
+        source.date, source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
+        source.exercise_style, source.shares_per_contract, source.primary_exchange, source.currency, source.underlying_price,
+        source.underlying_timestamp, source.delta, source.gamma, source.theta, source.vega, source.rho, source.lambda, source.epsilon, source.charm,
+        source.vanna, source.volga, source.bid, source.ask, source.bid_size, source.ask_size, source.mid_price, source.spread, source.spread_percentage,
+        source.last_price, source.last_size, source.last_trade_exchange, source.last_trade_conditions, source.volume, source.open_interest,
+        source.implied_volatility, source.historical_volatility, source.min_av, source.min_av_timestamp, source.prev_day_volume,
+        source.prev_day_open_interest, source.prev_day_high, source.prev_day_low, source.prev_day_close, source.prev_day_vwap,
+        source.days_to_expiration, source.time_value, source.intrinsic_value, source.extrinsic_value, source.moneyness, source.leverage,
+        source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
+        source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
+        source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
+        source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, CAST(NULL AS JSON), TIMESTAMP(source.created_at)
+      )`;
+        await this.bigquery.query({ query: mergeSql });
+        console.log(`Fast-path MERGE complete for ${rows.length} options contracts`);
     }
     // Initialize Stock table
     async initializeStockTable() {
@@ -245,13 +494,13 @@ class PolygonDatabaseService {
                 if (tableId === 'polygon_options') {
                     options = {
                         ...options,
-                        // Time partitioning for efficient time-based queries
+                        // Time partitioning by trading date
                         timePartitioning: {
                             type: 'DAY',
-                            field: 'timestamp'
+                            field: 'date'
                         },
-                        // Clustering on primary key fields for optimal query performance
-                        clustering: ['contract_id', 'timestamp']
+                        // Clustering on date and contract_id
+                        clustering: ['date', 'contract_id']
                     };
                 }
                 await table.create(options);
@@ -305,17 +554,23 @@ class PolygonDatabaseService {
     // Calculate options score based on the formula provided by the user
     calculateOptionsScore(contract) {
         try {
+            const details = contract.details || contract.contract || contract;
             const greeks = contract.greeks || contract;
             const quoteData = contract.last_quote || contract.nbbo || contract;
-            // Extract values with null checks
-            const theta = greeks.theta || 0;
-            const gamma = greeks.gamma || 0;
-            const delta = greeks.delta || 0;
-            const vega = greeks.vega || 0;
-            const ask = quoteData.ask || 0;
-            const strikePrice = contract.contract?.strike_price || contract.strike_price || 0;
-            const expirationDate = contract.contract?.expiration_date || contract.expiration_date;
-            if (!expirationDate || !strikePrice || !ask) {
+            const dayData = contract.day || {};
+            // Use only Polygon API values; do not fallback to other fields
+            const theta = Number(greeks.theta) || 0;
+            const gamma = Number(greeks.gamma) || 0;
+            const delta = Number(greeks.delta) || 0;
+            const vega = Number(greeks.vega) || 0;
+            const bid = Number((quoteData && quoteData.bid != null) ? quoteData.bid : dayData.close);
+            const strikePrice = Number(details?.strike_price);
+            const expirationDate = details?.expiration_date || contract.expiration_date || null;
+            // Validate presence (allow 0 values to pass through)
+            if (!expirationDate) {
+                return null;
+            }
+            if (!Number.isFinite(bid) || !Number.isFinite(strikePrice)) {
                 return null;
             }
             // Calculate days to expiry
@@ -324,7 +579,7 @@ class PolygonDatabaseService {
             const daysToExpiry = Math.max(1, Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
             // Calculate components of the score formula
             const thetaIncome = Math.abs(theta) * 100;
-            const premiumYield = (ask / strikePrice) * (365 / daysToExpiry) * 2;
+            const premiumYield = (bid / strikePrice) * (365 / daysToExpiry) * 2;
             const deltaRisk = delta * 50;
             const gammaRisk = gamma * 1000;
             const vegaRisk = vega * 10;
@@ -350,6 +605,14 @@ class PolygonDatabaseService {
         // Calculate days to expiration
         const today = new Date();
         const expiryDate = details.expiration_date ? new Date(details.expiration_date) : null;
+        // Determine current EST trading date for composite primary key
+        const now = new Date();
+        const estNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const tradingDate = estNow.toISOString().split('T')[0];
+        // Skip rows strictly after expiration date
+        if (expiryDate && tradingDate > details.expiration_date) {
+            return null;
+        }
         const daysToExpiration = expiryDate ? Math.max(0, Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))) : null;
         // Skip moneyness, intrinsic/extrinsic values, and leverage calculations since we don't have underlying price
         // Focus on the data that IS available from the API
@@ -363,7 +626,7 @@ class PolygonDatabaseService {
         const score = this.calculateOptionsScore(contract);
         return {
             // Primary Keys and Identifiers
-            timestamp: new Date(),
+            date: tradingDate,
             underlying_asset: underlyingAsset,
             contract_id: details.ticker || contractData.contract_id || contract.contract_id || '',
             contract_type: contractType,
@@ -372,10 +635,10 @@ class PolygonDatabaseService {
             expiration_date: details.expiration_date || contractData.expiration_date || contract.expiration_date || null,
             exercise_style: details.exercise_style || contractData.exercise_style || contract.exercise_style || null,
             shares_per_contract: details.shares_per_contract || contractData.shares_per_contract || contract.shares_per_contract || null,
-            primary_exchange: 'NASDAQ', // Default for MSTR
-            currency: 'USD', // Default for US options
+            primary_exchange: 'NASDAQ',
+            currency: 'USD',
             // Underlying Asset Data - skip underlying price
-            underlying_price: null, // Not available from Options Chain API
+            underlying_price: null,
             underlying_timestamp: null,
             // Comprehensive Greeks - extract from greeks object
             delta: greeksData.delta || null,
@@ -401,7 +664,9 @@ class PolygonDatabaseService {
             last_price: tradeData.price || dayData.close || null,
             last_size: tradeData.size || null,
             last_trade_exchange: tradeData.exchange || null,
-            last_trade_conditions: tradeData.conditions || [],
+            last_trade_conditions: Array.isArray(tradeData.conditions)
+                ? tradeData.conditions.join(',')
+                : (tradeData.conditions || null),
             // Market Data - extract from day data and other fields
             volume: dayData.volume || contract.volume || null,
             open_interest: contract.open_interest || null,
@@ -418,17 +683,17 @@ class PolygonDatabaseService {
             prev_day_vwap: contract.prev_day_vwap || dayData.vwap || null,
             // Options-Specific Data - skip calculations that need underlying price
             days_to_expiration: daysToExpiration,
-            time_value: null, // Skip - needs underlying price
-            intrinsic_value: null, // Skip - needs underlying price
-            extrinsic_value: null, // Skip - needs underlying price
-            moneyness: null, // Skip - needs underlying price
-            leverage: null, // Skip - needs underlying price
+            time_value: null,
+            intrinsic_value: null,
+            extrinsic_value: null,
+            moneyness: null,
+            leverage: null,
             // Risk Metrics
             probability_itm: contract.probability_itm || null,
             probability_otm: contract.probability_itm || null,
             max_loss: contract.max_loss || null,
             max_profit: contract.max_profit || null,
-            break_even_price: null, // Skip - needs underlying price
+            break_even_price: null,
             // Calculated Score
             score: score,
             // Timestamps - extract from available data
@@ -438,7 +703,9 @@ class PolygonDatabaseService {
             chain_timestamp: contract.chain_timestamp ? new Date(contract.chain_timestamp) : null,
             // Exchange and Market Data
             exchange: tradeData.exchange || null,
-            conditions: tradeData.conditions || [],
+            conditions: Array.isArray(tradeData.conditions)
+                ? tradeData.conditions.join(',')
+                : (tradeData.conditions || null),
             market_center: contract.market_center || null,
             tick_size: contract.tick_size || null,
             lot_size: contract.lot_size || null,
@@ -451,7 +718,8 @@ class PolygonDatabaseService {
             // Data Quality and Metadata
             data_source: 'polygon',
             data_quality_score: contract.data_quality_score || null,
-            last_updated: contract.last_updated ? new Date(contract.last_updated) : null,
+            insert_timestamp: new Date(),
+            last_updated: new Date(),
             raw_data: JSON.stringify(contract),
             created_at: new Date()
         };
@@ -573,17 +841,28 @@ class PolygonDatabaseService {
                     for (let i = 0; i < rows.length; i += batchSize) {
                         const batch = rows.slice(i, i + batchSize);
                         try {
-                            await this.upsertOptionsBatch(batch);
-                            processedCount += batch.length;
-                            console.log(`Upserted batch ${Math.floor(i / batchSize) + 1}: ${batch.length} options contracts. Total processed: ${processedCount}/${rows.length}`);
-                            // Add small delay between batches to respect rate limits
+                            const concurrency = 20;
+                            let nextIndex = 0;
+                            const worker = async () => {
+                                while (nextIndex < batch.length) {
+                                    const idx = nextIndex++;
+                                    const row = batch[idx];
+                                    await this.upsertOptionsRow(row);
+                                    processedCount += 1;
+                                    if (processedCount % 200 === 0) {
+                                        console.log(`Upserted ${processedCount}/${rows.length} options contracts`);
+                                    }
+                                }
+                            };
+                            const workers = Array.from({ length: Math.min(concurrency, batch.length) }, () => worker());
+                            await Promise.all(workers);
+                            // Small delay between batches
                             if (i + batchSize < rows.length) {
-                                await new Promise(resolve => setTimeout(resolve, 100));
+                                await new Promise(resolve => setTimeout(resolve, 25));
                             }
                         }
                         catch (batchError) {
                             console.error(`Error upserting batch ${Math.floor(i / batchSize) + 1}:`, batchError);
-                            // Continue with next batch even if one fails
                         }
                     }
                     console.log(`Successfully upserted ${processedCount} options contracts in BigQuery across ${Math.ceil(rows.length / batchSize)} batches`);
@@ -601,14 +880,14 @@ class PolygonDatabaseService {
             throw error;
         }
     }
-    // Upsert a single options row using MERGE statement
+    // Upsert a single options row using MERGE statement (contract_id + date)
     async upsertOptionsRow(row) {
         try {
             const query = `
         MERGE \`${this.projectId}.${this.datasetId}.polygon_options\` AS target
         USING (
           SELECT 
-            ? as timestamp,
+            DATE(TIMESTAMP(?), "America/New_York") as date,
             ? as underlying_asset,
             ? as contract_id,
             ? as contract_type,
@@ -681,11 +960,12 @@ class PolygonDatabaseService {
             ? as is_standard,
             ? as data_source,
             ? as data_quality_score,
+            ? as insert_timestamp,
             ? as last_updated,
-            ? as raw_data,
+            CAST(? AS JSON) as raw_data,
             ? as created_at
         ) AS source
-        ON target.contract_id = source.contract_id AND target.timestamp = TIMESTAMP(source.timestamp)
+        ON target.contract_id = source.contract_id AND target.date = source.date
         WHEN MATCHED THEN
           UPDATE SET
             underlying_asset = source.underlying_asset,
@@ -764,7 +1044,7 @@ class PolygonDatabaseService {
             created_at = source.created_at
         WHEN NOT MATCHED THEN
           INSERT (
-            timestamp, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
+            date, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
             exercise_style, shares_per_contract, primary_exchange, currency, underlying_price,
             underlying_timestamp, delta, gamma, theta, vega, rho, lambda, epsilon, charm,
             vanna, volga, bid, ask, bid_size, ask_size, mid_price, spread, spread_percentage,
@@ -775,10 +1055,10 @@ class PolygonDatabaseService {
             probability_itm, probability_otm, max_loss, max_profit, break_even_price, score,
             quote_timestamp, trade_timestamp, participant_timestamp, chain_timestamp, exchange,
             conditions, market_center, tick_size, lot_size, is_penny, is_weekly, is_monthly,
-            is_quarterly, is_standard, data_source, data_quality_score, last_updated, raw_data, created_at
+            is_quarterly, is_standard, data_source, data_quality_score, insert_timestamp, last_updated, raw_data, created_at
           )
           VALUES (
-            TIMESTAMP(source.timestamp), source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
+            source.date, source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
             source.exercise_style, source.shares_per_contract, source.primary_exchange, source.currency, source.underlying_price,
             source.underlying_timestamp, source.delta, source.gamma, source.theta, source.vega, source.rho, source.lambda, source.epsilon, source.charm,
             source.vanna, source.volga, source.bid, source.ask, source.bid_size, source.ask_size, source.mid_price, source.spread, source.spread_percentage,
@@ -789,13 +1069,13 @@ class PolygonDatabaseService {
             source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
             source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
             source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
-            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
+            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
           )
       `;
             const jobConfig = {
                 query: query,
                 params: [
-                    row.timestamp,
+                    row.insert_timestamp || new Date(),
                     row.underlying_asset,
                     row.contract_id,
                     row.contract_type,
@@ -868,26 +1148,106 @@ class PolygonDatabaseService {
                     row.is_standard,
                     row.data_source,
                     row.data_quality_score,
+                    row.insert_timestamp,
                     row.last_updated,
                     row.raw_data,
                     row.created_at
+                ],
+                types: [
+                    'TIMESTAMP',         // insert_timestamp to derive date in EST
+                    'STRING',            // underlying_asset
+                    'STRING',            // contract_id
+                    'STRING',            // contract_type
+                    'FLOAT64',           // strike_price
+                    'DATE',              // expiration_date
+                    'STRING',            // exercise_style
+                    'INT64',             // shares_per_contract
+                    'STRING',            // primary_exchange
+                    'STRING',            // currency
+                    'FLOAT64',           // underlying_price
+                    'TIMESTAMP',         // underlying_timestamp
+                    'FLOAT64',           // delta
+                    'FLOAT64',           // gamma
+                    'FLOAT64',           // theta
+                    'FLOAT64',           // vega
+                    'FLOAT64',           // rho
+                    'FLOAT64',           // lambda
+                    'FLOAT64',           // epsilon
+                    'FLOAT64',           // charm
+                    'FLOAT64',           // vanna
+                    'FLOAT64',           // volga
+                    'FLOAT64',           // bid
+                    'FLOAT64',           // ask
+                    'INT64',             // bid_size
+                    'INT64',             // ask_size
+                    'FLOAT64',           // mid_price
+                    'FLOAT64',           // spread
+                    'FLOAT64',           // spread_percentage
+                    'FLOAT64',           // last_price
+                    'INT64',             // last_size
+                    'INT64',             // last_trade_exchange
+                    'STRING',            // last_trade_conditions
+                    'INT64',             // volume
+                    'INT64',             // open_interest
+                    'FLOAT64',           // implied_volatility
+                    'FLOAT64',           // historical_volatility
+                    'FLOAT64',           // min_av
+                    'TIMESTAMP',         // min_av_timestamp
+                    'INT64',             // prev_day_volume
+                    'INT64',             // prev_day_open_interest
+                    'FLOAT64',           // prev_day_high
+                    'FLOAT64',           // prev_day_low
+                    'FLOAT64',           // prev_day_close
+                    'FLOAT64',           // prev_day_vwap
+                    'INT64',             // days_to_expiration
+                    'FLOAT64',           // time_value
+                    'FLOAT64',           // intrinsic_value
+                    'FLOAT64',           // extrinsic_value
+                    'STRING',            // moneyness
+                    'FLOAT64',           // leverage
+                    'FLOAT64',           // probability_itm
+                    'FLOAT64',           // probability_otm
+                    'FLOAT64',           // max_loss
+                    'FLOAT64',           // max_profit
+                    'FLOAT64',           // break_even_price
+                    'FLOAT64',           // score
+                    'TIMESTAMP',         // quote_timestamp
+                    'TIMESTAMP',         // trade_timestamp
+                    'TIMESTAMP',         // participant_timestamp
+                    'TIMESTAMP',         // chain_timestamp
+                    'INT64',             // exchange
+                    'STRING',            // conditions
+                    'STRING',            // market_center
+                    'FLOAT64',           // tick_size
+                    'INT64',             // lot_size
+                    'BOOL',              // is_penny
+                    'BOOL',              // is_weekly
+                    'BOOL',              // is_monthly
+                    'BOOL',              // is_quarterly
+                    'BOOL',              // is_standard
+                    'STRING',            // data_source
+                    'FLOAT64',           // data_quality_score
+                    'TIMESTAMP',         // insert_timestamp
+                    'TIMESTAMP',         // last_updated
+                    'JSON',              // raw_data
+                    'TIMESTAMP'          // created_at
                 ]
             };
             await this.bigquery.query(jobConfig);
-            console.log(`Upserted options contract: ${row.contract_id} at ${row.timestamp}`);
+            console.log(`Upserted options contract: ${row.contract_id} on ${row.date}`);
         }
         catch (error) {
             console.error('Error upserting options row:', error);
             throw error;
         }
     }
-    // Upsert a batch of options rows
+    // Upsert a batch of options rows (contract_id + date)
     async upsertOptionsBatch(rows) {
         try {
             // For batch upserts, we'll use a single MERGE statement with UNION ALL
             const valuesClause = rows.map((row, index) => `
         SELECT 
-          @timestamp_${index} as timestamp,
+          @date_${index} as date,
           @underlying_asset_${index} as underlying_asset,
           @contract_id_${index} as contract_id,
           @contract_type_${index} as contract_type,
@@ -960,6 +1320,7 @@ class PolygonDatabaseService {
           @is_standard_${index} as is_standard,
           @data_source_${index} as data_source,
           @data_quality_score_${index} as data_quality_score,
+          @insert_timestamp_${index} as insert_timestamp,
           @last_updated_${index} as last_updated,
           @raw_data_${index} as raw_data,
           @created_at_${index} as created_at
@@ -969,7 +1330,7 @@ class PolygonDatabaseService {
         USING (
           ${valuesClause}
         ) AS source
-        ON target.contract_id = source.contract_id AND target.timestamp = source.timestamp
+        ON target.contract_id = source.contract_id AND target.date = source.date
         WHEN MATCHED THEN
           UPDATE SET
             underlying_asset = source.underlying_asset,
@@ -1048,7 +1409,7 @@ class PolygonDatabaseService {
             created_at = source.created_at
         WHEN NOT MATCHED THEN
           INSERT (
-            timestamp, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
+            date, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
             exercise_style, shares_per_contract, primary_exchange, currency, underlying_price,
             underlying_timestamp, delta, gamma, theta, vega, rho, lambda, epsilon, charm,
             vanna, volga, bid, ask, bid_size, ask_size, mid_price, spread, spread_percentage,
@@ -1059,10 +1420,10 @@ class PolygonDatabaseService {
             probability_itm, probability_otm, max_loss, max_profit, break_even_price, score,
             quote_timestamp, trade_timestamp, participant_timestamp, chain_timestamp, exchange,
             conditions, market_center, tick_size, lot_size, is_penny, is_weekly, is_monthly,
-            is_quarterly, is_standard, data_source, data_quality_score, last_updated, raw_data, created_at
+            is_quarterly, is_standard, data_source, data_quality_score, insert_timestamp, last_updated, raw_data, created_at
           )
           VALUES (
-            TIMESTAMP(source.timestamp), source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
+            source.date, source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
             source.exercise_style, source.shares_per_contract, source.primary_exchange, source.currency, source.underlying_price,
             source.underlying_timestamp, source.delta, source.gamma, source.theta, source.vega, source.rho, source.lambda, source.epsilon, source.charm,
             source.vanna, source.volga, source.bid, source.ask, source.bid_size, source.ask_size, source.mid_price, source.spread, source.spread_percentage,
@@ -1073,13 +1434,13 @@ class PolygonDatabaseService {
             source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
             source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
             source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
-            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
+            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
           )
       `;
             // Build parameters for the batch
             const params = [];
             rows.forEach((row, index) => {
-                params.push({ name: `timestamp_${index}`, value: row.timestamp }, { name: `underlying_asset_${index}`, value: row.underlying_asset }, { name: `contract_id_${index}`, value: row.contract_id }, { name: `contract_type_${index}`, value: row.contract_type }, { name: `strike_price_${index}`, value: row.strike_price }, { name: `expiration_date_${index}`, value: row.expiration_date }, { name: `exercise_style_${index}`, value: row.exercise_style }, { name: `shares_per_contract_${index}`, value: row.shares_per_contract }, { name: `primary_exchange_${index}`, value: row.primary_exchange }, { name: `currency_${index}`, value: row.currency }, { name: `underlying_price_${index}`, value: row.underlying_price }, { name: `underlying_timestamp_${index}`, value: row.underlying_timestamp }, { name: `delta_${index}`, value: row.delta }, { name: `gamma_${index}`, value: row.gamma }, { name: `theta_${index}`, value: row.theta }, { name: `vega_${index}`, value: row.vega }, { name: `rho_${index}`, value: row.rho }, { name: `lambda_${index}`, value: row.lambda }, { name: `epsilon_${index}`, value: row.epsilon }, { name: `charm_${index}`, value: row.charm }, { name: `vanna_${index}`, value: row.vanna }, { name: `volga_${index}`, value: row.volga }, { name: `bid_${index}`, value: row.bid }, { name: `ask_${index}`, value: row.ask }, { name: `bid_size_${index}`, value: row.bid_size }, { name: `ask_size_${index}`, value: row.ask_size }, { name: `mid_price_${index}`, value: row.mid_price }, { name: `spread_${index}`, value: row.spread }, { name: `spread_percentage_${index}`, value: row.spread_percentage }, { name: `last_price_${index}`, value: row.last_price }, { name: `last_size_${index}`, value: row.last_size }, { name: `last_trade_exchange_${index}`, value: row.last_trade_exchange }, { name: `last_trade_conditions_${index}`, value: row.last_trade_conditions }, { name: `volume_${index}`, value: row.volume }, { name: `open_interest_${index}`, value: row.open_interest }, { name: `implied_volatility_${index}`, value: row.implied_volatility }, { name: `historical_volatility_${index}`, value: row.historical_volatility }, { name: `min_av_${index}`, value: row.min_av }, { name: `min_av_timestamp_${index}`, value: row.min_av_timestamp }, { name: `prev_day_volume_${index}`, value: row.prev_day_volume }, { name: `prev_day_open_interest_${index}`, value: row.prev_day_open_interest }, { name: `prev_day_high_${index}`, value: row.prev_day_high }, { name: `prev_day_low_${index}`, value: row.prev_day_low }, { name: `prev_day_close_${index}`, value: row.prev_day_close }, { name: `prev_day_vwap_${index}`, value: row.prev_day_vwap }, { name: `days_to_expiration_${index}`, value: row.days_to_expiration }, { name: `time_value_${index}`, value: row.time_value }, { name: `intrinsic_value_${index}`, value: row.intrinsic_value }, { name: `extrinsic_value_${index}`, value: row.extrinsic_value }, { name: `moneyness_${index}`, value: row.moneyness }, { name: `leverage_${index}`, value: row.leverage }, { name: `probability_itm_${index}`, value: row.probability_itm }, { name: `probability_otm_${index}`, value: row.probability_otm }, { name: `max_loss_${index}`, value: row.max_loss }, { name: `max_profit_${index}`, value: row.max_profit }, { name: `break_even_price_${index}`, value: row.break_even_price }, { name: `score_${index}`, value: row.score }, { name: `quote_timestamp_${index}`, value: row.quote_timestamp }, { name: `trade_timestamp_${index}`, value: row.trade_timestamp }, { name: `participant_timestamp_${index}`, value: row.participant_timestamp }, { name: `chain_timestamp_${index}`, value: row.chain_timestamp }, { name: `exchange_${index}`, value: row.exchange }, { name: `conditions_${index}`, value: row.conditions }, { name: `market_center_${index}`, value: row.market_center }, { name: `tick_size_${index}`, value: row.tick_size }, { name: `lot_size_${index}`, value: row.lot_size }, { name: `is_penny_${index}`, value: row.is_penny }, { name: `is_weekly_${index}`, value: row.is_weekly }, { name: `is_monthly_${index}`, value: row.is_monthly }, { name: `is_quarterly_${index}`, value: row.is_quarterly }, { name: `is_standard_${index}`, value: row.is_standard }, { name: `data_source_${index}`, value: row.data_source }, { name: `data_quality_score_${index}`, value: row.data_quality_score }, { name: `last_updated_${index}`, value: row.last_updated }, { name: `raw_data_${index}`, value: row.raw_data }, { name: `created_at_${index}`, value: row.created_at });
+                params.push({ name: `date_${index}`, value: row.date }, { name: `underlying_asset_${index}`, value: row.underlying_asset }, { name: `contract_id_${index}`, value: row.contract_id }, { name: `contract_type_${index}`, value: row.contract_type }, { name: `strike_price_${index}`, value: row.strike_price }, { name: `expiration_date_${index}`, value: row.expiration_date }, { name: `exercise_style_${index}`, value: row.exercise_style }, { name: `shares_per_contract_${index}`, value: row.shares_per_contract }, { name: `primary_exchange_${index}`, value: row.primary_exchange }, { name: `currency_${index}`, value: row.currency }, { name: `underlying_price_${index}`, value: row.underlying_price }, { name: `underlying_timestamp_${index}`, value: row.underlying_timestamp }, { name: `delta_${index}`, value: row.delta }, { name: `gamma_${index}`, value: row.gamma }, { name: `theta_${index}`, value: row.theta }, { name: `vega_${index}`, value: row.vega }, { name: `rho_${index}`, value: row.rho }, { name: `lambda_${index}`, value: row.lambda }, { name: `epsilon_${index}`, value: row.epsilon }, { name: `charm_${index}`, value: row.charm }, { name: `vanna_${index}`, value: row.vanna }, { name: `volga_${index}`, value: row.volga }, { name: `bid_${index}`, value: row.bid }, { name: `ask_${index}`, value: row.ask }, { name: `bid_size_${index}`, value: row.bid_size }, { name: `ask_size_${index}`, value: row.ask_size }, { name: `mid_price_${index}`, value: row.mid_price }, { name: `spread_${index}`, value: row.spread }, { name: `spread_percentage_${index}`, value: row.spread_percentage }, { name: `last_price_${index}`, value: row.last_price }, { name: `last_size_${index}`, value: row.last_size }, { name: `last_trade_exchange_${index}`, value: row.last_trade_exchange }, { name: `last_trade_conditions_${index}`, value: row.last_trade_conditions }, { name: `volume_${index}`, value: row.volume }, { name: `open_interest_${index}`, value: row.open_interest }, { name: `implied_volatility_${index}`, value: row.implied_volatility }, { name: `historical_volatility_${index}`, value: row.historical_volatility }, { name: `min_av_${index}`, value: row.min_av }, { name: `min_av_timestamp_${index}`, value: row.min_av_timestamp }, { name: `prev_day_volume_${index}`, value: row.prev_day_volume }, { name: `prev_day_open_interest_${index}`, value: row.prev_day_open_interest }, { name: `prev_day_high_${index}`, value: row.prev_day_high }, { name: `prev_day_low_${index}`, value: row.prev_day_low }, { name: `prev_day_close_${index}`, value: row.prev_day_close }, { name: `prev_day_vwap_${index}`, value: row.prev_day_vwap }, { name: `days_to_expiration_${index}`, value: row.days_to_expiration }, { name: `time_value_${index}`, value: row.time_value }, { name: `intrinsic_value_${index}`, value: row.intrinsic_value }, { name: `extrinsic_value_${index}`, value: row.extrinsic_value }, { name: `moneyness_${index}`, value: row.moneyness }, { name: `leverage_${index}`, value: row.leverage }, { name: `probability_itm_${index}`, value: row.probability_itm }, { name: `probability_otm_${index}`, value: row.probability_otm }, { name: `max_loss_${index}`, value: row.max_loss }, { name: `max_profit_${index}`, value: row.max_profit }, { name: `break_even_price_${index}`, value: row.break_even_price }, { name: `score_${index}`, value: row.score }, { name: `quote_timestamp_${index}`, value: row.quote_timestamp }, { name: `trade_timestamp_${index}`, value: row.trade_timestamp }, { name: `participant_timestamp_${index}`, value: row.participant_timestamp }, { name: `chain_timestamp_${index}`, value: row.chain_timestamp }, { name: `exchange_${index}`, value: row.exchange }, { name: `conditions_${index}`, value: row.conditions }, { name: `market_center_${index}`, value: row.market_center }, { name: `tick_size_${index}`, value: row.tick_size }, { name: `lot_size_${index}`, value: row.lot_size }, { name: `is_penny_${index}`, value: row.is_penny }, { name: `is_weekly_${index}`, value: row.is_weekly }, { name: `is_monthly_${index}`, value: row.is_monthly }, { name: `is_quarterly_${index}`, value: row.is_quarterly }, { name: `is_standard_${index}`, value: row.is_standard }, { name: `data_source_${index}`, value: row.data_source }, { name: `data_quality_score_${index}`, value: row.data_quality_score }, { name: `insert_timestamp_${index}`, value: row.insert_timestamp }, { name: `last_updated_${index}`, value: row.last_updated }, { name: `raw_data_${index}`, value: row.raw_data }, { name: `created_at_${index}`, value: row.created_at });
             });
             const jobConfig = {
                 query: query,

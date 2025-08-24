@@ -240,6 +240,56 @@ bq query "SELECT COUNT(*) as total_records FROM \`direction_sky_data.polygon_opt
 ```
 
 ## 🔧 Troubleshooting
+## ✅ Testing & Verification
+
+### Prerequisites
+- Polygon.io API Key
+- GCP project with BigQuery enabled
+- Service account key with BigQuery permissions
+- Node.js 18+
+
+### Environment Setup
+Add to `.env`:
+```bash
+POLYGON_API_KEY=your_polygon_api_key_here
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
+BIGQUERY_DATASET=direction_sky_data
+```
+
+### End-to-End Tests (from `tests/`)
+- Complete integration: `node tests/test-polygon-complete.js`
+- Cloud Function test: `node tests/test-polygon-function.js`
+- Jest unit tests: `npm test tests/test-polygon-fetcher.js`
+
+### Manual API Checks
+```bash
+# Options chain
+curl "https://api.polygon.io/v3/snapshot/options/MSTR?apiKey=$POLYGON_API_KEY"
+
+# Stock snapshot
+curl "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/MSTR?apiKey=$POLYGON_API_KEY"
+```
+
+### BigQuery Verification
+```sql
+-- Tables present
+SELECT table_id FROM `your-project.direction_sky_data.__TABLES__`
+WHERE table_id LIKE 'polygon_%';
+
+-- Recent options rows
+SELECT *
+FROM `your-project.direction_sky_data.polygon_options`
+WHERE underlying_asset = 'MSTR'
+ORDER BY created_at DESC
+LIMIT 10;
+```
+
+### Common Issues
+- Missing API key → set POLYGON_API_KEY
+- BigQuery permission denied → grant Data Editor/User roles
+- 429 rate limits → retry with backoff (built-in)
+
 
 ### **Common Issues**
 

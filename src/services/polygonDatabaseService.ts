@@ -469,9 +469,14 @@ export class PolygonDatabaseService {
     // Calculate the options score using available data
     const score = this.calculateOptionsScore(contract);
     
+    // Determine current EST trading date for composite primary key
+    const now = new Date();
+    const estNow = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const tradingDate = estNow.toISOString().split('T')[0];
+
     return {
       // Primary Keys and Identifiers
-      timestamp: new Date(),
+      date: tradingDate,
       underlying_asset: underlyingAsset,
       contract_id: details.ticker || contractData.contract_id || contract.contract_id || '',
       contract_type: contractType,
@@ -574,6 +579,8 @@ export class PolygonDatabaseService {
       // Data Quality and Metadata
       data_source: 'polygon',
       data_quality_score: contract.data_quality_score || null,
+      insert_timestamp: new Date(),
+      last_updated: new Date(),
       raw_data: JSON.stringify(contract),
       created_at: new Date()
     };
@@ -745,14 +752,14 @@ export class PolygonDatabaseService {
     }
   }
 
-  // Upsert a single options row using MERGE statement
+  // Upsert a single options row using MERGE statement (match on contract_id + date)
   private async upsertOptionsRow(row: any): Promise<void> {
     try {
       const query = `
         MERGE \`${this.projectId}.${this.datasetId}.polygon_options\` AS target
         USING (
           SELECT 
-            ? as timestamp,
+            ? as date,
             ? as underlying_asset,
             ? as contract_id,
             ? as contract_type,
@@ -825,11 +832,12 @@ export class PolygonDatabaseService {
             ? as is_standard,
             ? as data_source,
             ? as data_quality_score,
+            ? as insert_timestamp,
             ? as last_updated,
             ? as raw_data,
             ? as created_at
         ) AS source
-        ON target.contract_id = source.contract_id AND target.timestamp = TIMESTAMP(source.timestamp)
+        ON target.contract_id = source.contract_id AND target.date = source.date
         WHEN MATCHED THEN
           UPDATE SET
             underlying_asset = source.underlying_asset,
@@ -908,7 +916,7 @@ export class PolygonDatabaseService {
             created_at = source.created_at
         WHEN NOT MATCHED THEN
           INSERT (
-            timestamp, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
+            date, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
             exercise_style, shares_per_contract, primary_exchange, currency, underlying_price,
             underlying_timestamp, delta, gamma, theta, vega, rho, lambda, epsilon, charm,
             vanna, volga, bid, ask, bid_size, ask_size, mid_price, spread, spread_percentage,
@@ -919,10 +927,10 @@ export class PolygonDatabaseService {
             probability_itm, probability_otm, max_loss, max_profit, break_even_price, score,
             quote_timestamp, trade_timestamp, participant_timestamp, chain_timestamp, exchange,
             conditions, market_center, tick_size, lot_size, is_penny, is_weekly, is_monthly,
-            is_quarterly, is_standard, data_source, data_quality_score, last_updated, raw_data, created_at
+            is_quarterly, is_standard, data_source, data_quality_score, insert_timestamp, last_updated, raw_data, created_at
           )
           VALUES (
-            TIMESTAMP(source.timestamp), source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
+            source.date, source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
             source.exercise_style, source.shares_per_contract, source.primary_exchange, source.currency, source.underlying_price,
             source.underlying_timestamp, source.delta, source.gamma, source.theta, source.vega, source.rho, source.lambda, source.epsilon, source.charm,
             source.vanna, source.volga, source.bid, source.ask, source.bid_size, source.ask_size, source.mid_price, source.spread, source.spread_percentage,
@@ -933,14 +941,14 @@ export class PolygonDatabaseService {
             source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
             source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
             source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
-            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
+            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
           )
       `;
 
       const jobConfig = {
         query: query,
         params: [
-          row.timestamp,
+          row.date,
           row.underlying_asset,
           row.contract_id,
           row.contract_type,
@@ -1013,6 +1021,7 @@ export class PolygonDatabaseService {
           row.is_standard,
           row.data_source,
           row.data_quality_score,
+          row.insert_timestamp,
           row.last_updated,
           row.raw_data,
           row.created_at
@@ -1020,20 +1029,20 @@ export class PolygonDatabaseService {
       };
 
       await this.bigquery.query(jobConfig);
-      console.log(`Upserted options contract: ${row.contract_id} at ${row.timestamp}`);
+      console.log(`Upserted options contract: ${row.contract_id} on ${row.date}`);
     } catch (error) {
       console.error('Error upserting options row:', error);
       throw error;
     }
   }
 
-  // Upsert a batch of options rows
+  // Upsert a batch of options rows (match on contract_id + date)
   private async upsertOptionsBatch(rows: any[]): Promise<void> {
     try {
       // For batch upserts, we'll use a single MERGE statement with UNION ALL
       const valuesClause = rows.map((row, index) => `
         SELECT 
-          @timestamp_${index} as timestamp,
+          @date_${index} as date,
           @underlying_asset_${index} as underlying_asset,
           @contract_id_${index} as contract_id,
           @contract_type_${index} as contract_type,
@@ -1106,6 +1115,7 @@ export class PolygonDatabaseService {
           @is_standard_${index} as is_standard,
           @data_source_${index} as data_source,
           @data_quality_score_${index} as data_quality_score,
+          @insert_timestamp_${index} as insert_timestamp,
           @last_updated_${index} as last_updated,
           @raw_data_${index} as raw_data,
           @created_at_${index} as created_at
@@ -1116,7 +1126,7 @@ export class PolygonDatabaseService {
         USING (
           ${valuesClause}
         ) AS source
-        ON target.contract_id = source.contract_id AND target.timestamp = source.timestamp
+        ON target.contract_id = source.contract_id AND target.date = source.date
         WHEN MATCHED THEN
           UPDATE SET
             underlying_asset = source.underlying_asset,
@@ -1195,7 +1205,7 @@ export class PolygonDatabaseService {
             created_at = source.created_at
         WHEN NOT MATCHED THEN
           INSERT (
-            timestamp, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
+            date, underlying_asset, contract_id, contract_type, strike_price, expiration_date,
             exercise_style, shares_per_contract, primary_exchange, currency, underlying_price,
             underlying_timestamp, delta, gamma, theta, vega, rho, lambda, epsilon, charm,
             vanna, volga, bid, ask, bid_size, ask_size, mid_price, spread, spread_percentage,
@@ -1206,10 +1216,10 @@ export class PolygonDatabaseService {
             probability_itm, probability_otm, max_loss, max_profit, break_even_price, score,
             quote_timestamp, trade_timestamp, participant_timestamp, chain_timestamp, exchange,
             conditions, market_center, tick_size, lot_size, is_penny, is_weekly, is_monthly,
-            is_quarterly, is_standard, data_source, data_quality_score, last_updated, raw_data, created_at
+            is_quarterly, is_standard, data_source, data_quality_score, insert_timestamp, last_updated, raw_data, created_at
           )
           VALUES (
-            TIMESTAMP(source.timestamp), source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
+            source.date, source.underlying_asset, source.contract_id, source.contract_type, source.strike_price, source.expiration_date,
             source.exercise_style, source.shares_per_contract, source.primary_exchange, source.currency, source.underlying_price,
             source.underlying_timestamp, source.delta, source.gamma, source.theta, source.vega, source.rho, source.lambda, source.epsilon, source.charm,
             source.vanna, source.volga, source.bid, source.ask, source.bid_size, source.ask_size, source.mid_price, source.spread, source.spread_percentage,
@@ -1220,7 +1230,7 @@ export class PolygonDatabaseService {
             source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
             source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
             source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
-            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
+            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
           )
       `;
 
@@ -1228,7 +1238,7 @@ export class PolygonDatabaseService {
       const params: any[] = [];
       rows.forEach((row, index) => {
         params.push(
-          { name: `timestamp_${index}`, value: row.timestamp },
+          { name: `date_${index}`, value: row.date },
           { name: `underlying_asset_${index}`, value: row.underlying_asset },
           { name: `contract_id_${index}`, value: row.contract_id },
           { name: `contract_type_${index}`, value: row.contract_type },
@@ -1301,6 +1311,7 @@ export class PolygonDatabaseService {
           { name: `is_standard_${index}`, value: row.is_standard },
           { name: `data_source_${index}`, value: row.data_source },
           { name: `data_quality_score_${index}`, value: row.data_quality_score },
+          { name: `insert_timestamp_${index}`, value: row.insert_timestamp },
           { name: `last_updated_${index}`, value: row.last_updated },
           { name: `raw_data_${index}`, value: row.raw_data },
           { name: `created_at_${index}`, value: row.created_at }

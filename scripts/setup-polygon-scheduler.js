@@ -16,18 +16,15 @@ const FUNCTION_URL = process.env.POLYGON_FUNCTION_URL || `https://${REGION}-${PR
 
 const SCHEDULERS = [
   {
-    name: 'polygon-batch-ingestion',
-    description: 'Triggers Polygon.io batch data collection every 5 minutes during market hours',
-    schedule: '*/5 9-16 * * 1-5', // Every 5 minutes, 9 AM - 4 PM, Monday-Friday (ET)
+    name: 'polygon-hourly-ingestion',
+    description: 'Triggers Polygon.io options chain upsert hourly during market hours',
+    schedule: '0 9-16 * * 1-5', // At minute 0 each hour 9-16, Mon-Fri (ET)
     timeZone: 'America/New_York',
     functionUrl: FUNCTION_URL,
     httpMethod: 'POST',
     body: JSON.stringify({
-      assets: [
-        { symbol: 'MSTR', asset_type: 'stock', options_enabled: true, real_time_enabled: true, batch_enabled: true },
-        { symbol: 'BTC', asset_type: 'crypto', options_enabled: false, real_time_enabled: true, batch_enabled: true }
-      ],
-      mode: 'batch'
+      action: 'fetch-and-store',
+      symbol: 'MSTR'
     })
   },
   {

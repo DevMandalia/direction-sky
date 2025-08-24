@@ -8,47 +8,7 @@ const { PolygonDatabaseService } = require('./services/polygonDatabaseService');
 // Simple HTTP client for making API calls
 const https = require('https');
 
-// Calculate options score based on the formula
-function calculateOptionsScore(contract) {
-    try {
-        const details = contract.details || contract;
-        const greeks = contract.greeks || {};
-        const dayData = contract.day || {};
-        
-        // Extract values with null checks
-        const theta = parseFloat(greeks.theta) || 0;
-        const gamma = parseFloat(greeks.gamma) || 0;
-        const delta = parseFloat(greeks.delta) || 0;
-        const vega = parseFloat(greeks.vega) || 0;
-        const ask = parseFloat(dayData.close) || 0; // Use close price as ask
-        const strikePrice = parseFloat(details.strike_price) || 0;
-        const expirationDate = details.expiration_date;
-        
-        if (!expirationDate || !strikePrice || !ask) {
-            return null;
-        }
-        
-        // Calculate days to expiry
-        const today = new Date();
-        const expiryDate = new Date(expirationDate);
-        const daysToExpiry = Math.max(1, Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
-        
-        // Calculate components of the score formula
-        const thetaIncome = Math.abs(theta) * 100;
-        const premiumYield = (ask / strikePrice) * (365 / daysToExpiry) * 2;
-        const deltaRisk = delta * 50;
-        const gammaRisk = gamma * 1000;
-        const vegaRisk = vega * 10;
-        
-        // Calculate final score
-        const score = thetaIncome + premiumYield - deltaRisk - gammaRisk - vegaRisk;
-        
-        return Math.round(score * 100) / 100; // Round to 2 decimal places
-    } catch (error) {
-        console.error('Error calculating options score:', error);
-        return null;
-    }
-}
+// Score calculation is handled in the service during formatting/upsert
 
 // Check if market is open (9:30 AM - 4:00 PM EST, weekdays only, no holidays)
 function isMarketOpen() {
@@ -306,32 +266,19 @@ async function fetchAllMSTROptionsContracts(apiKey) {
     return allContracts;
 }
 
-// Helper function for inserting batches using BigQuery table.insert() method
+// Helper function to upsert batches via service MERGE
 async function upsertOptionsBatch(rows, dbService) {
     try {
         if (rows.length === 0) {
-            console.log('⚠️ No valid rows to insert');
+            console.log('⚠️ No valid rows to upsert');
             return;
         }
-        
-        console.log(`🔄 Starting simple INSERT for ${rows.length} rows using table.insert()`);
-        const table = dbService.bigquery.dataset(process.env.BIGQUERY_DATASET).table('polygon_options');
-        
-        // Insert all rows at once using table.insert()
-        const [job] = await table.insert(rows);
-        
-        // Check if job exists and has errors
-        if (job && job.status && job.status.errors && job.status.errors.length > 0) {
-            console.error('❌ Insert job errors:', job.status.errors);
-            throw new Error(`Insert failed: ${job.status.errors.map(e => e.message).join(', ')}`);
-        }
-        
-        // If no job object or no errors, consider it successful
-        console.log(`✅ Successfully inserted ${rows.length} rows using table.insert()`);
-        
+        console.log(`🔄 Upserting ${rows.length} rows via service MERGE`);
+        await dbService.upsertOptionsBatch(rows);
+        console.log(`✅ Successfully upserted ${rows.length} rows`);
     } catch (error) {
         console.error('❌ Error in upsertOptionsBatch:', error);
-        throw new Error(`Insert failed: ${error.message}`);
+        throw new Error(`Upsert failed: ${error.message}`);
     }
 }
 
@@ -372,186 +319,22 @@ async function handleFetchAndStore(expiryDate) {
 
         console.log(`📊 Found ${calls.length} MSTR calls and ${puts.length} MSTR puts out of ${allMSTROptionsContracts.length} total contracts`);
 
-        // Store options data to BigQuery
+        // Store options via service to ensure consistent schema and date handling
         console.log(`💾 Storing MSTR options data to BigQuery...`);
-        
-        // Direct BigQuery insertion with proper data type handling
         try {
-            const table = dbService.bigquery.dataset(process.env.BIGQUERY_DATASET).table('polygon_options');
-            
-            // Process contracts in smaller batches to avoid memory issues
-            const batchSize = 50; // Restored to production batch size
-            let totalStored = 0;
-            
-            for (let i = 0; i < filteredContracts.length; i += batchSize) {
-                const batch = filteredContracts.slice(i, i + batchSize);
-                const rows = batch.map(contract => {
-                    const details = contract.details || contract;
-                    const dayData = contract.day || {};
-                    const greeks = contract.greeks || {};
-                    
-                    // Calculate options score
-                    const score = calculateOptionsScore(contract);
-                    
-                    // Get current EST date for primary key
-                    const now = new Date();
-                    const estDate = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
-                    const tradingDate = estDate.toISOString().split('T')[0]; // YYYY-MM-DD format
-                    
-                    // Ensure all values are BigQuery-compatible
-                    return {
-                        // Primary Keys - NEW STRUCTURE
-                        date: tradingDate,
-                        contract_id: details.ticker || `MSTR_${details.strike_price}_${details.expiration_date}_${details.contract_type}`,
-                        
-                        // Timestamps - UPDATED
-                        insert_timestamp: new Date().toISOString(),
-                        last_updated: new Date().toISOString(),
-                        
-                        // Contract Details
-                        underlying_asset: 'MSTR',
-                        contract_type: details.contract_type || 'unknown',
-                        strike_price: parseFloat(details.strike_price) || 0,
-                        expiration_date: details.expiration_date || '2025-12-31',
-                        exercise_style: details.exercise_style || 'american',
-                        shares_per_contract: parseInt(details.shares_per_contract) || 100,
-                        primary_exchange: 'NASDAQ',
-                        currency: 'USD',
-                        underlying_price: 0,
-                        underlying_timestamp: new Date().toISOString(),
-                        
-                        // Greeks field child attributes
-                        delta: parseFloat(greeks.delta) || 0,
-                        gamma: parseFloat(greeks.gamma) || 0,
-                        theta: parseFloat(greeks.theta) || 0,
-                        vega: parseFloat(greeks.vega) || 0,
-                        rho: parseFloat(greeks.rho) || 0,
-                        lambda: 0,
-                        epsilon: 0,
-                        charm: 0,
-                        vanna: 0,
-                        volga: 0,
-                        
-                        // Quote fields
-                        bid: parseFloat(contract.last_quote?.bid) || 0,
-                        ask: parseFloat(contract.last_quote?.ask) || 0,
-                        bid_size: parseInt(contract.last_quote?.bid_size) || 0,
-                        ask_size: parseInt(contract.last_quote?.ask_size) || 0,
-                        mid_price: parseFloat(contract.last_quote?.midpoint) || 0,
-                        spread: parseFloat(contract.last_quote?.ask || 0) - parseFloat(contract.last_quote?.bid || 0),
-                        spread_percentage: 0,
-                        last_price: parseFloat(contract.last_trade?.price) || 0,
-                        last_size: parseInt(contract.last_trade?.size) || 0,
-                        last_trade_exchange: 0, // INTEGER field - set to 0 for unknown
-                        last_trade_conditions: Array.isArray(contract.last_trade?.conditions) ? contract.last_trade.conditions.join(', ') : 'UNKNOWN',
-                        
-                        // Day field child attributes
-                        volume: parseInt(dayData.volume) || 0,
-                        open_interest: parseInt(contract.open_interest) || 0,
-                        close: parseFloat(dayData.close) || 0,
-                        change: parseFloat(dayData.change) || 0,
-                        change_percent: parseFloat(dayData.change_percent) || 0,
-                        high: parseFloat(dayData.high) || 0,
-                        low: parseFloat(dayData.low) || 0,
-                        open: parseFloat(dayData.open) || 0,
-                        previous_close: parseFloat(dayData.previous_close) || 0,
-                        vwap: parseFloat(dayData.vwap) || 0,
-                        day_last_updated: dayData.last_updated ? new Date(parseInt(dayData.last_updated) / 1000000).toISOString() : new Date().toISOString(),
-                        day_volume: parseInt(dayData.volume) || 0,
-                        prev_day_volume: 0,
-                        prev_day_open_interest: 0,
-                        prev_day_high: 0,
-                        prev_day_low: 0,
-                        prev_day_close: 0,
-                        prev_day_vwap: 0,
-                        
-                        // Implied volatility
-                        implied_volatility: parseFloat(contract.implied_volatility) || 0,
-                        historical_volatility: 0,
-                        min_av: 0,
-                        min_av_timestamp: new Date().toISOString(),
-                        
-                        // Quote field child attributes
-                        quote_bid: parseFloat(contract.last_quote?.bid) || 0,
-                        quote_ask: parseFloat(contract.last_quote?.ask) || 0,
-                        quote_bid_size: parseInt(contract.last_quote?.bid_size) || 0,
-                        quote_ask_size: parseInt(contract.last_quote?.ask_size) || 0,
-                        quote_last_updated: contract.last_quote?.last_updated ? new Date(parseInt(contract.last_quote.last_updated) / 1000000).toISOString() : new Date().toISOString(),
-                        quote_last_exchange: contract.last_quote?.last_exchange || 'UNKNOWN',
-                        quote_midpoint: parseFloat(contract.last_quote?.midpoint) || 0,
-                        quote_timeframe: contract.last_quote?.timeframe || 'UNKNOWN',
-                        quote_bid_exchange: contract.last_quote?.bid_exchange || 'UNKNOWN',
-                        
-                        // Last trade field child attributes
-                        last_trade_price: parseFloat(contract.last_trade?.price) || 0,
-                        last_trade_size: parseInt(contract.last_trade?.size) || 0,
-                        last_trade_timestamp: contract.last_trade?.timestamp ? new Date(parseInt(contract.last_trade.timestamp) / 1000000).toISOString() : new Date().toISOString(),
-                        
-                        // Underlying asset field child attributes
-                        underlying_ticker: contract.underlying_asset?.ticker || 'MSTR',
-                        
-                        // Additional fields from schema
-                        days_to_expiration: 0,
-                        time_value: 0,
-                        intrinsic_value: 0,
-                        extrinsic_value: 0,
-                        moneyness: 'UNKNOWN',
-                        leverage: 0,
-                        probability_itm: 0,
-                        probability_otm: 0,
-                        max_loss: 0,
-                        max_profit: 0,
-                        break_even_price: 0,
-                        
-                        // Calculated score
-                        score: score || 0,
-                        
-                        // Additional timestamp fields
-                        quote_timestamp: new Date().toISOString(),
-                        trade_timestamp: new Date().toISOString(),
-                        participant_timestamp: new Date().toISOString(),
-                        chain_timestamp: new Date().toISOString(),
-                        
-                        // Additional fields from schema
-                        exchange: 0,
-                        conditions: 'UNKNOWN',
-                        market_center: 'UNKNOWN',
-                        tick_size: 0,
-                        lot_size: 100,
-                        is_penny: false,
-                        is_weekly: false,
-                        is_monthly: false,
-                        is_quarterly: false,
-                        is_standard: true,
-                        
-                        // Raw data for backup
-                        raw_data: JSON.stringify(contract),
-                        
-                        // Additional required fields from schema
-                        data_source: 'polygon',
-                        data_quality_score: 0,
-                        created_at: new Date().toISOString()
-                    };
-                });
-                
-                // Filter out null rows (expired contracts)
-                const validRows = rows.filter(row => row !== null);
-
-                // Insert batch into BigQuery using MERGE for upsert functionality
-                console.log(`🔍 Debug: Upserting batch with ${validRows.length} rows`);
-                console.log(`🔍 Debug: First row sample:`, JSON.stringify(validRows[0], null, 2));
-                
-                // Use MERGE statement for upsert functionality
-                await upsertOptionsBatch(validRows, dbService);
-                console.log(`✅ Upserted batch ${Math.floor(i / batchSize) + 1}: ${validRows.length} contracts`);
-                totalStored += validRows.length;
-                
-                // Small delay between batches
-                if (i + batchSize < filteredContracts.length) {
-                    await new Promise(resolve => setTimeout(resolve, 100));
+            const snapshot = {
+                underlying_asset: 'MSTR',
+                options: {
+                    calls: calls,
+                    puts: puts
                 }
+            };
+            if (typeof dbService.storeOptionsDataFast === 'function') {
+                await dbService.storeOptionsDataFast(snapshot);
+            } else {
+                await dbService.storeOptionsData(snapshot);
             }
-            
+            const totalStored = calls.length + puts.length;
             console.log(`✅ Successfully stored ${totalStored} MSTR options contracts to BigQuery`);
         } catch (storageError) {
             console.error(`❌ Error storing to BigQuery:`, storageError);
