@@ -578,13 +578,17 @@ class PolygonDatabaseService {
             const expiryDate = new Date(expirationDate);
             const daysToExpiry = Math.max(1, Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)));
             // Calculate components of the score formula
-            const thetaIncome = Math.abs(theta) * 100;
+            const thetaIncome = theta * 100;
             const premiumYield = (bid / strikePrice) * (365 / daysToExpiry) * 2;
             const deltaRisk = delta * 50;
             const gammaRisk = gamma * 1000;
             const vegaRisk = vega * 10;
             // Calculate final score
             const score = thetaIncome + premiumYield - deltaRisk - gammaRisk - vegaRisk;
+            // For selling Covered Calls, we want MORE Theta income, MORE Premium Yield BUT Delta, Gamma, Vega is BAD
+            // i.e. for selling CC, we want high premiums for low deltas. 
+            // For buying calls, the opposite is true. 
+            // For buying, premium yield should be a negative. And use ask instead of bid.
             return Math.round(score * 100) / 100; // Round to 2 decimal places
         }
         catch (error) {
@@ -622,6 +626,15 @@ class PolygonDatabaseService {
         const midPrice = bid && ask ? (bid + ask) / 2 : null;
         const spread = bid && ask ? ask - bid : null;
         const spreadPercentage = bid && ask && bid > 0 ? ((ask - bid) / bid) * 100 : null;
+        // Extract underlying asset info from snapshot (if present)
+        const underlyingAssetInfo = contract.underlying_asset || (contract.contract && contract.contract.underlying_asset) || null;
+        const chainUnderlyingPrice = underlyingAssetInfo && typeof underlyingAssetInfo.price === 'number'
+            ? underlyingAssetInfo.price
+            : null;
+        const chainUnderlyingTs = underlyingAssetInfo && underlyingAssetInfo.timestamp
+            ? new Date(underlyingAssetInfo.timestamp)
+            : null;
+
         // Calculate the options score using available data
         const score = this.calculateOptionsScore(contract);
         return {
@@ -637,9 +650,9 @@ class PolygonDatabaseService {
             shares_per_contract: details.shares_per_contract || contractData.shares_per_contract || contract.shares_per_contract || null,
             primary_exchange: 'NASDAQ',
             currency: 'USD',
-            // Underlying Asset Data - skip underlying price
-            underlying_price: null,
-            underlying_timestamp: null,
+            // Underlying Asset Data - sourced from options chain snapshot when available
+            underlying_price: chainUnderlyingPrice,
+            underlying_timestamp: chainUnderlyingTs,
             // Comprehensive Greeks - extract from greeks object
             delta: greeksData.delta || null,
             gamma: greeksData.gamma || null,

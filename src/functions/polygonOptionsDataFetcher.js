@@ -4,6 +4,7 @@ exports.polygonHealthCheck = exports.polygonOptionsDataFetcher = void 0;
 
 // Import required modules
 const { PolygonDatabaseService } = require('./services/polygonDatabaseService');
+const { BigQuery } = require('@google-cloud/bigquery');
 
 // Simple HTTP client for making API calls
 const https = require('https');
@@ -104,6 +105,60 @@ const polygonOptionsDataFetcher = async (req, res) => {
             return;
         }
         
+        // Path-based endpoints to match UI expectations (bypass market-hours gating)
+        const path = req.path || '';
+
+        // Helper: BigQuery client
+        const bigquery = new BigQuery({
+            projectId: process.env.BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+            keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+        });
+
+        async function executeQuery(query, parameters) {
+            try {
+                let params;
+                if (Array.isArray(parameters)) {
+                    params = parameters.reduce((acc, p) => { if (p && p.name) acc[p.name] = p.value; return acc; }, {});
+                } else if (parameters && typeof parameters === 'object') {
+                    params = parameters;
+                }
+                const [rows] = await bigquery.query({ query, params });
+                return rows;
+            } catch (err) {
+                console.error('❌ BigQuery query execution failed:', err);
+                throw err;
+            }
+        }
+
+        // GET /api/polygon-options/expiry-dates → { dates: string[] }
+        if (path.endsWith('/api/polygon-options/expiry-dates') && req.method === 'GET') {
+            const datasetId = process.env.BIGQUERY_DATASET || 'direction_sky_data';
+            const projectId = process.env.BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
+            const query = `
+                SELECT DISTINCT CAST(expiration_date AS STRING) AS expiration_date
+                FROM \`${projectId}.${datasetId}.polygon_options\`
+                WHERE expiration_date IS NOT NULL AND expiration_date >= CURRENT_DATE()
+                ORDER BY expiration_date ASC
+            `;
+            const rows = await executeQuery(query);
+            const dates = rows.map(r => r.expiration_date).filter(Boolean);
+            res.status(200).json({ dates });
+            return;
+        }
+
+        // POST /api/polygon-options → { rows }
+        if (path.endsWith('/api/polygon-options') && req.method === 'POST') {
+            const body = req.body || {};
+            const { query, parameters } = body;
+            if (!query || typeof query !== 'string') {
+                res.status(400).json({ error: 'Missing or invalid "query" in request body' });
+                return;
+            }
+            const rows = await executeQuery(query, parameters);
+            res.status(200).json({ rows });
+            return;
+        }
+
         // Check if market is open before proceeding (with temporary testing bypass)
         const forceTest = req.query.force_test === 'true';
         if (!isMarketOpen() && !forceTest) {

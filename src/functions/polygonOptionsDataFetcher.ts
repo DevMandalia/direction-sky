@@ -1,4 +1,5 @@
 import { Request, Response } from '@google-cloud/functions-framework';
+import { BigQuery } from '@google-cloud/bigquery';
 import { PolygonAPIClient } from '../utils/polygonAPIClient';
 import { PolygonDatabaseService } from '../services/polygonDatabaseService';
 import { 
@@ -25,7 +26,64 @@ export const polygonOptionsDataFetcher = async (req: Request, res: Response): Pr
       return;
     }
 
-    // Get parameters from query string or request body
+    // Path-based API routing to match UI expectations
+    const path = (req as any).path || '';
+
+    // Helper: BigQuery client
+    const bigquery = new BigQuery({
+      projectId: process.env.BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT,
+      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS
+    });
+
+    // Helper: Execute arbitrary query with named parameters
+    const executeQuery = async (query: string, parameters: Array<{ name: string; value: any }> | Record<string, any> | undefined) => {
+      try {
+        let params: Record<string, any> | undefined;
+        if (Array.isArray(parameters)) {
+          params = parameters.reduce((acc: Record<string, any>, p) => {
+            if (p && p.name) acc[p.name] = p.value;
+            return acc;
+          }, {});
+        } else if (parameters && typeof parameters === 'object') {
+          params = parameters as Record<string, any>;
+        }
+        const [rows] = await bigquery.query({ query, params });
+        return rows as any[];
+      } catch (err) {
+        console.error('❌ BigQuery query execution failed:', err);
+        throw err;
+      }
+    };
+
+    // GET /api/polygon-options/expiry-dates → { dates: string[] }
+    if (path.endsWith('/api/polygon-options/expiry-dates') && req.method === 'GET') {
+      const datasetId = process.env.BIGQUERY_DATASET || 'direction_sky_data';
+      const projectId = process.env.BIGQUERY_PROJECT_ID || process.env.GOOGLE_CLOUD_PROJECT || '';
+      const query = `
+        SELECT DISTINCT CAST(expiration_date AS STRING) AS expiration_date
+        FROM \`${projectId}.${datasetId}.polygon_options\`
+        WHERE expiration_date IS NOT NULL AND expiration_date >= CURRENT_DATE()
+        ORDER BY expiration_date ASC
+      `;
+      const rows = await executeQuery(query, undefined);
+      const dates = rows.map((r: any) => r.expiration_date).filter(Boolean);
+      res.status(200).json({ dates });
+      return;
+    }
+
+    // POST /api/polygon-options → { rows }
+    if (path.endsWith('/api/polygon-options') && req.method === 'POST') {
+      const { query, parameters } = (req.body || {}) as { query?: string; parameters?: Array<{ name: string; value: any }> | Record<string, any> };
+      if (!query || typeof query !== 'string') {
+        res.status(400).json({ error: 'Missing or invalid "query" in request body' });
+        return;
+      }
+      const rows = await executeQuery(query, parameters);
+      res.status(200).json({ rows });
+      return;
+    }
+
+    // Get parameters from query string or request body (legacy action-based API)
     const symbol = req.query.symbol || req.body?.symbol || 'MSTR';
     const expiryDate = req.query.expiry || req.body?.expiry;
     const action = req.query.action || req.body?.action || 'health-check';

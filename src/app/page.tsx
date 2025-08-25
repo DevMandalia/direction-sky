@@ -1,12 +1,15 @@
 'use client'
 
+import React from 'react'
+import { format, parseISO, isValid as isValidDate } from 'date-fns'
+
 import { useState, useEffect } from 'react'
 import { 
   MagnifyingGlassIcon,
   ChevronDownIcon,
   ChevronUpIcon,
-  FunnelIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  DocumentDuplicateIcon
 } from '@heroicons/react/24/outline'
 
 interface OptionsData {
@@ -28,6 +31,7 @@ interface OptionsData {
   implied_volatility?: number
   underlying_price: number
   timestamp: string
+  last_updated?: string
   high?: number
   low?: number
   last_price?: number
@@ -36,8 +40,8 @@ interface OptionsData {
   score?: number
 }
 
-// BigQuery API configuration
-const BIGQUERY_API_BASE = process.env.NEXT_PUBLIC_BIGQUERY_API_BASE || 'https://your-bigquery-api.com'
+// BigQuery API configuration (must be provided via env)
+const BIGQUERY_API_BASE = process.env.NEXT_PUBLIC_BIGQUERY_API_BASE
 const API_KEY = process.env.NEXT_PUBLIC_BIGQUERY_API_KEY
 
 export default function OptionsChain() {
@@ -46,19 +50,136 @@ export default function OptionsChain() {
   const [error, setError] = useState<string | null>(null)
   const [selectedExpiry, setSelectedExpiry] = useState<string>('')
   const [expiryDates, setExpiryDates] = useState<string[]>([])
+  const [optionType, setOptionType] = useState<'all' | 'call' | 'put'>('all')
   const [searchTerm, setSearchTerm] = useState('')
-  const [sortBy, setSortBy] = useState<'strike' | 'volume' | 'oi' | 'iv'>('strike')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [sortBy, setSortBy] = useState<'score' | 'strike_price' | 'volume' | 'open_interest' | 'implied_volatility'>('score')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [expandedOptions, setExpandedOptions] = useState<Set<string>>(new Set())
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null)
+
+  // Filters state
+  const [underlyingAsset, setUnderlyingAsset] = useState<string>('')
+  const [deltaMin, setDeltaMin] = useState<string>('')
+  const [deltaMax, setDeltaMax] = useState<string>('')
+  const [gammaMin, setGammaMin] = useState<string>('')
+  const [gammaMax, setGammaMax] = useState<string>('')
+  const [thetaMin, setThetaMin] = useState<string>('')
+  const [thetaMax, setThetaMax] = useState<string>('')
+  const [vegaMin, setVegaMin] = useState<string>('')
+  const [vegaMax, setVegaMax] = useState<string>('')
+  const [volumeMin, setVolumeMin] = useState<string>('')
+  const [volumeMax, setVolumeMax] = useState<string>('')
+  const [openInterestMin, setOpenInterestMin] = useState<string>('')
+  const [openInterestMax, setOpenInterestMax] = useState<string>('')
+  const [ivMin, setIvMin] = useState<string>('') // percent
+  const [ivMax, setIvMax] = useState<string>('') // percent
+
+  const formatDate = (value: any) => {
+    if (!value) return '-'
+    // If BigQuery DATE string 'YYYY-MM-DD', avoid timezone shifts by constructing local Date
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      const [y, m, d] = value.split('-').map((v: string) => parseInt(v, 10))
+      const dateObj = new Date(y, m - 1, d)
+      return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy') : value
+    }
+    if (typeof value === 'object' && 'value' in value && typeof (value as any).value === 'string') {
+      const raw = (value as any).value
+      if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        const [y, m, d] = raw.split('-').map((v: string) => parseInt(v, 10))
+        const dateObj = new Date(y, m - 1, d)
+        return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy') : raw
+      }
+      const dateObj = parseISO(raw)
+      return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy') : raw
+    }
+    const dateObj = typeof value === 'string' ? parseISO(value) : new Date(value)
+    return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy') : String(value)
+  }
+
+  const formatDateTime = (value: any) => {
+    if (!value) return '-'
+    if (typeof value === 'string') {
+      const dateObj = parseISO(value)
+      return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy HH:mm:ss') : value
+    }
+    if (typeof value === 'object' && 'value' in value && typeof (value as any).value === 'string') {
+      const dateObj = parseISO((value as any).value)
+      return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy HH:mm:ss') : String((value as any).value)
+    }
+    const dateObj = new Date(value)
+    return isValidDate(dateObj) ? format(dateObj, 'MMM d, yyyy HH:mm:ss') : String(value)
+  }
+
+  const handleRefresh = async () => {
+    try {
+      setLoading(true)
+      if (!BIGQUERY_API_BASE) throw new Error('API base not configured')
+      const ingestUrl = `${BIGQUERY_API_BASE}?action=fetch-and-store&symbol=MSTR${selectedExpiry ? `&expiry=${encodeURIComponent(selectedExpiry)}` : ''}`
+      await fetch(ingestUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+        },
+        body: JSON.stringify({})
+      })
+    } catch (e) {
+      console.error('Error triggering ingest:', e)
+    } finally {
+      await fetchOptionsData()
+      await fetchLastFetchTime()
+      setLoading(false)
+    }
+  }
 
   // Fetch options data from BigQuery
   const fetchOptionsData = async () => {
     try {
       setError(null)
+      if (!BIGQUERY_API_BASE || BIGQUERY_API_BASE.includes('your-bigquery-api.com')) {
+        throw new Error('BIGQUERY API is not configured. Set NEXT_PUBLIC_BIGQUERY_API_BASE (and key if required).')
+      }
       
-      // TODO: Replace with your actual BigQuery API endpoint
-      // This could be a Cloud Function, Cloud Run service, or direct BigQuery connection
+      // Build query with optional filters
+      const conditions: string[] = []
+      const parameters: { name: string; value: string }[] = []
+      if (selectedExpiry) {
+        conditions.push('expiration_date = @expiry_date')
+        parameters.push({ name: 'expiry_date', value: selectedExpiry })
+      }
+      if (optionType !== 'all') {
+        conditions.push('contract_type = @contract_type')
+        parameters.push({ name: 'contract_type', value: optionType })
+      }
+      if (underlyingAsset) {
+        conditions.push('underlying_asset = @underlying_asset')
+        parameters.push({ name: 'underlying_asset', value: underlyingAsset.toUpperCase() })
+      }
+      // Numeric range filters (server-side when provided)
+      const addNumericFilter = (field: string, minStr: string, maxStr: string, isPercent = false) => {
+        const minVal = minStr.trim() === '' ? null : parseFloat(minStr)
+        const maxVal = maxStr.trim() === '' ? null : parseFloat(maxStr)
+        const toServer = (v: number) => isPercent ? String(v / 100) : String(v)
+        if (minVal !== null && !Number.isNaN(minVal)) {
+          conditions.push(`${field} >= @${field}_min`)
+          parameters.push({ name: `${field}_min`, value: toServer(minVal) })
+        }
+        if (maxVal !== null && !Number.isNaN(maxVal)) {
+          conditions.push(`${field} <= @${field}_max`)
+          parameters.push({ name: `${field}_max`, value: toServer(maxVal) })
+        }
+      }
+
+      addNumericFilter('delta', deltaMin, deltaMax)
+      addNumericFilter('gamma', gammaMin, gammaMax)
+      addNumericFilter('theta', thetaMin, thetaMax)
+      addNumericFilter('vega', vegaMin, vegaMax)
+      addNumericFilter('volume', volumeMin, volumeMax)
+      addNumericFilter('open_interest', openInterestMin, openInterestMax)
+      addNumericFilter('implied_volatility', ivMin, ivMax, true)
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
       const response = await fetch(`${BIGQUERY_API_BASE}/api/polygon-options`, {
         method: 'POST',
         headers: {
@@ -67,12 +188,13 @@ export default function OptionsChain() {
         },
         body: JSON.stringify({
           query: `
-            SELECT 
+            -- Deduplicate to latest row per contract_id
+            SELECT
               contract_id,
               underlying_asset,
               contract_type,
               strike_price,
-              expiration_date,
+              CAST(expiration_date AS STRING) AS expiration_date,
               bid,
               ask,
               bid_size,
@@ -85,23 +207,56 @@ export default function OptionsChain() {
               vega,
               implied_volatility,
               underlying_price,
-              timestamp,
               high,
               low,
               last_price,
               change,
               change_percent,
-              score
-            FROM \`dev-epsilon-467101-v2.direction_sky_data.polygon_options\`
-            WHERE expiration_date = @expiry_date
-            ORDER BY strike_price ASC
+              score,
+              last_updated,
+              quote_timestamp,
+              trade_timestamp,
+              insert_timestamp
+            FROM (
+              SELECT
+                contract_id,
+                underlying_asset,
+                contract_type,
+                strike_price,
+                CAST(expiration_date AS STRING) AS expiration_date,
+                bid,
+                ask,
+                bid_size,
+                ask_size,
+                volume,
+                open_interest,
+                delta,
+                gamma,
+                theta,
+                vega,
+                implied_volatility,
+                underlying_price,
+                high,
+                low,
+                last_price,
+                change,
+                change_percent,
+                score,
+                last_updated,
+                quote_timestamp,
+                trade_timestamp,
+                insert_timestamp,
+                ROW_NUMBER() OVER (
+                  PARTITION BY contract_id
+                  ORDER BY last_updated DESC, quote_timestamp DESC, trade_timestamp DESC, insert_timestamp DESC
+                ) AS rn
+              FROM \`dev-epsilon-467101-v2.direction_sky_data.polygon_options\`
+              ${whereClause}
+            )
+            WHERE rn = 1
+            ORDER BY score DESC, strike_price ASC
           `,
-          parameters: [
-            {
-              name: 'expiry_date',
-              value: selectedExpiry || new Date().toISOString().split('T')[0]
-            }
-          ]
+          parameters
         })
       })
 
@@ -134,7 +289,8 @@ export default function OptionsChain() {
         vega: row.vega ? parseFloat(row.vega) : undefined,
         implied_volatility: row.implied_volatility ? parseFloat(row.implied_volatility) : undefined,
         underlying_price: parseFloat(row.underlying_price) || 0,
-        timestamp: row.timestamp,
+        timestamp: row.quote_timestamp || row.trade_timestamp || row.last_updated || row.insert_timestamp || null,
+        last_updated: row.last_updated || null,
         high: row.high ? parseFloat(row.high) : undefined,
         low: row.low ? parseFloat(row.low) : undefined,
         last_price: row.last_price ? parseFloat(row.last_price) : undefined,
@@ -145,65 +301,57 @@ export default function OptionsChain() {
 
       setOptionsData(transformedData)
       setLastUpdated(new Date())
-      
-      // Extract unique expiry dates if not already set
-      if (expiryDates.length === 0) {
-        const dates = [...new Set(transformedData.map(option => option.expiration_date))].sort()
-        setExpiryDates(dates)
-        if (dates.length > 0 && !selectedExpiry) {
-          setSelectedExpiry(dates[0])
-        }
-      }
-
     } catch (error) {
       console.error('Error fetching options data:', error)
       setError(error instanceof Error ? error.message : 'Failed to fetch options data')
-      
-      // Fallback to mock data for development
-      if (process.env.NODE_ENV === 'development') {
-        console.log('Falling back to mock data for development')
-        const mockData: OptionsData[] = [
-          // Calls
-          {
-            contract_id: 'MSTR240119C00100000',
-            underlying_asset: 'MSTR',
-            contract_type: 'call',
-            strike_price: 100,
-            expiration_date: '2024-01-19',
-            bid: 45.50,
-            ask: 46.20,
-            bid_size: 10,
-            ask_size: 15,
-            volume: 1250,
-            open_interest: 3420,
-            delta: 0.85,
-            gamma: 0.02,
-            theta: -0.15,
-            vega: 0.08,
-            implied_volatility: 0.45,
-            underlying_price: 145.67,
-            timestamp: new Date().toISOString(),
-            high: 47.80,
-            low: 44.20,
-            last_price: 45.85,
-            change: 0.35,
-            change_percent: 0.77,
-            score: 0.95
-          },
-          // Add more mock data as needed...
-        ]
-        setOptionsData(mockData)
-        setExpiryDates(['2024-01-19'])
-        setSelectedExpiry('2024-01-19')
-      }
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Fetch last fetch time (MAX last_updated from BigQuery)
+  const fetchLastFetchTime = async () => {
+    try {
+      if (!BIGQUERY_API_BASE || BIGQUERY_API_BASE.includes('your-bigquery-api.com')) {
+        throw new Error('BIGQUERY API is not configured. Set NEXT_PUBLIC_BIGQUERY_API_BASE (and key if required).')
+      }
+      const response = await fetch(`${BIGQUERY_API_BASE}/api/polygon-options`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${API_KEY}`,
+        },
+        body: JSON.stringify({
+          query: `
+            SELECT MAX(last_updated) AS last_updated
+            FROM \`dev-epsilon-467101-v2.direction_sky_data.polygon_options\`
+          `,
+          parameters: []
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+
+      const data = await response.json()
+      const raw = data.rows?.[0]?.last_updated ?? data.rows?.[0]?.last_updated?.value
+      if (raw) {
+        const parsed = typeof raw === 'string' ? new Date(raw) : (raw?.value ? new Date(raw.value) : new Date(raw))
+        if (!isNaN(parsed.getTime())) setLastFetchTime(parsed)
+      }
+    } catch (e) {
+      // Non-fatal; just leave lastFetchTime as-is
+      console.error('Error fetching last fetch time:', e)
     }
   }
 
   // Fetch expiry dates from BigQuery
   const fetchExpiryDates = async () => {
     try {
+      if (!BIGQUERY_API_BASE || BIGQUERY_API_BASE.includes('your-bigquery-api.com')) {
+        throw new Error('BIGQUERY API is not configured. Set NEXT_PUBLIC_BIGQUERY_API_BASE (and key if required).')
+      }
       const response = await fetch(`${BIGQUERY_API_BASE}/api/polygon-options/expiry-dates`, {
         method: 'GET',
         headers: {
@@ -216,69 +364,70 @@ export default function OptionsChain() {
       }
 
       const data = await response.json()
-      const dates = data.dates || []
+      const dates: string[] = data.dates || []
       setExpiryDates(dates)
-      
-      if (dates.length > 0 && !selectedExpiry) {
-        setSelectedExpiry(dates[0])
-      }
     } catch (error) {
       console.error('Error fetching expiry dates:', error)
-      // Fallback to current date + next few months
-      const today = new Date()
-      const fallbackDates = []
-      for (let i = 0; i < 6; i++) {
-        const date = new Date(today.getFullYear(), today.getMonth() + i, 19)
-        fallbackDates.push(date.toISOString().split('T')[0])
-      }
-      setExpiryDates(fallbackDates)
-      setSelectedExpiry(fallbackDates[0])
+      setError(prev => prev || (error instanceof Error ? error.message : 'Failed to fetch expiry dates'))
     }
   }
 
   useEffect(() => {
     fetchExpiryDates()
+    fetchOptionsData()
+    fetchLastFetchTime()
   }, [])
-
-  useEffect(() => {
-    if (selectedExpiry) {
-      fetchOptionsData()
-    }
-  }, [selectedExpiry])
 
   // Set up real-time updates every 30 seconds
   useEffect(() => {
-    if (!selectedExpiry) return
-    
     const interval = setInterval(() => {
       fetchOptionsData()
+      fetchLastFetchTime()
     }, 30000)
     
     return () => clearInterval(interval)
-  }, [selectedExpiry])
+  }, [])
 
-  const filteredData = optionsData.filter(option => 
-    option.expiration_date === selectedExpiry &&
-    (searchTerm === '' || option.strike_price.toString().includes(searchTerm))
-  )
+  // Refetch when filters change
+  useEffect(() => {
+    fetchOptionsData()
+  }, [selectedExpiry, optionType, underlyingAsset, deltaMin, deltaMax, gammaMin, gammaMax, thetaMin, thetaMax, vegaMin, vegaMax, volumeMin, volumeMax, openInterestMin, openInterestMax, ivMin, ivMax])
 
-  const calls = filteredData.filter(option => option.contract_type === 'call')
-  const puts = filteredData.filter(option => option.contract_type === 'put')
+  const withinRange = (value: number | undefined, minStr: string, maxStr: string, isPercent = false) => {
+    const hasFilter = (minStr.trim() !== '' || maxStr.trim() !== '')
+    const minVal = minStr.trim() === '' ? null : parseFloat(minStr)
+    const maxVal = maxStr.trim() === '' ? null : parseFloat(maxStr)
+    const actual = typeof value === 'number' ? (isPercent ? value * 100 : value) : undefined
+    if (!hasFilter) return true
+    if (actual === undefined) return false
+    if (minVal !== null && !Number.isNaN(minVal) && actual < minVal) return false
+    if (maxVal !== null && !Number.isNaN(maxVal) && actual > maxVal) return false
+    return true
+  }
 
-  const sortedCalls = [...calls].sort((a, b) => {
-    if (sortOrder === 'asc') {
-      return a[sortBy] > b[sortBy] ? 1 : -1
-    } else {
-      return a[sortBy] < b[sortBy] ? 1 : -1
-    }
+  const filteredData = optionsData.filter(option => {
+    if (searchTerm && !option.strike_price.toString().includes(searchTerm)) return false
+    if (optionType !== 'all' && option.contract_type !== optionType) return false
+    if (selectedExpiry && option.expiration_date !== selectedExpiry) return false
+    if (underlyingAsset && option.underlying_asset?.toUpperCase() !== underlyingAsset.toUpperCase()) return false
+    if (!withinRange(option.delta, deltaMin, deltaMax)) return false
+    if (!withinRange(option.gamma, gammaMin, gammaMax)) return false
+    if (!withinRange(option.theta, thetaMin, thetaMax)) return false
+    if (!withinRange(option.vega, vegaMin, vegaMax)) return false
+    if (!withinRange(option.volume, volumeMin, volumeMax)) return false
+    if (!withinRange(option.open_interest, openInterestMin, openInterestMax)) return false
+    if (!withinRange(option.implied_volatility, ivMin, ivMax, true)) return false
+    return true
   })
 
-  const sortedPuts = [...puts].sort((a, b) => {
-    if (sortOrder === 'asc') {
-      return a[sortBy] > b[sortBy] ? 1 : -1
-    } else {
-      return a[sortBy] < b[sortBy] ? 1 : -1
+  const sortedOptions = [...filteredData].sort((a, b) => {
+    const aValue = (a as any)[sortBy] ?? -Infinity
+    const bValue = (b as any)[sortBy] ?? -Infinity
+    if (aValue === bValue) {
+      // tie-breaker by strike price ascending
+      return a.strike_price - b.strike_price
     }
+    return sortOrder === 'asc' ? (aValue > bValue ? 1 : -1) : (aValue < bValue ? 1 : -1)
   })
 
   const handleSort = (field: typeof sortBy) => {
@@ -286,7 +435,7 @@ export default function OptionsChain() {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
     } else {
       setSortBy(field)
-      setSortOrder('asc')
+      setSortOrder(field === 'score' ? 'desc' : 'asc')
     }
   }
 
@@ -312,21 +461,36 @@ export default function OptionsChain() {
             <ChevronRightIcon 
               className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
             />
-            <span>${option.strike_price}</span>
+            <span className="text-gray-300">{option.contract_id}</span>
+            <button
+              type="button"
+              title="Copy contract ID"
+              aria-label={`Copy ${option.contract_id}`}
+              tabIndex={0}
+              onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(option.contract_id).catch(() => {}) }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); navigator.clipboard?.writeText(option.contract_id).catch(() => {}) } }}
+              className="inline-flex items-center justify-center rounded p-1 hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <DocumentDuplicateIcon className="h-4 w-4 text-gray-400" />
+            </button>
           </div>
         </td>
-        <td className="px-3 py-2 text-sm text-green-400">${option.bid?.toFixed(2) || '-'}</td>
-        <td className="px-3 py-2 text-sm text-red-400">${option.ask?.toFixed(2) || '-'}</td>
-        <td className="px-3 py-2 text-sm">{option.volume?.toLocaleString() || '-'}</td>
-        <td className="px-3 py-2 text-sm">{option.open_interest?.toLocaleString() || '-'}</td>
-        <td className="px-3 py-2 text-sm">{(option.implied_volatility * 100)?.toFixed(1) || '-'}%</td>
-        <td className="px-3 py-2 text-sm">{option.score?.toFixed(2) || '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{option.contract_type?.toUpperCase()}</td>
+        <td className="px-2 py-1 text-[12px]">{formatDate(option.expiration_date)}</td>
+        <td className="px-2 py-1 text-[12px]">${option.strike_price}</td>
+        <td className="px-2 py-1 text-[12px] text-green-400">${option.bid?.toFixed(2) || '-'}</td>
+        <td className="px-2 py-1 text-[12px] text-red-400">${option.ask?.toFixed(2) || '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{option.volume?.toLocaleString() || '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{option.open_interest?.toLocaleString() || '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{typeof option.implied_volatility === 'number' ? `${(option.implied_volatility * 100).toFixed(1)}%` : '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{option.score?.toFixed(2) || '-'}</td>
+        
       </tr>
       
       {/* Expanded Details Row */}
       {isExpanded && (
         <tr>
-          <td colSpan={7} className="px-0 py-0">
+          <td colSpan={10} className="px-0 py-0">
             <div className="bg-gray-700/30 border-t border-gray-600">
               <div className="p-4">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -430,16 +594,13 @@ export default function OptionsChain() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg"></div>
+              <img src="/rocket.svg" alt="Direction Sky rocketship logo" className="w-8 h-8" />
               <h1 className="text-xl font-bold">Direction Sky Options</h1>
             </div>
             <div className="flex items-center space-x-4">
               <div className="text-sm text-gray-300">
-                <span className="text-green-400">MSTR</span>
+                <span className="text-green-400">{underlyingAsset ? underlyingAsset.toUpperCase() : 'MSTR'}</span>
                 <span className="ml-2">${optionsData[0]?.underlying_price?.toFixed(2) || '0.00'}</span>
-              </div>
-              <div className="text-xs text-gray-400">
-                Last updated: {lastUpdated.toLocaleTimeString()}
               </div>
             </div>
           </div>
@@ -465,29 +626,81 @@ export default function OptionsChain() {
       )}
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        {/* Controls */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-6">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-300 mb-2">Expiration Date</label>
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" aria-busy={loading}>
+        {loading && (
+          <div className="mb-3 h-1 w-full bg-gray-700/70 rounded overflow-hidden">
+            <div className="h-1 w-1/3 bg-blue-500 animate-pulse"></div>
+          </div>
+        )}
+        {/* Toolbar */}
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+          <div className="flex items-center gap-2" role="tablist" aria-label="Option type tabs">
+            <button
+              type="button"
+              onClick={() => setOptionType('all')}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-md border text-sm ${optionType === 'all' ? 'bg-blue-600 border-blue-500' : 'bg-gray-800 border-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              role="tab"
+              aria-selected={optionType === 'all'}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setOptionType('call')}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-md border text-sm ${optionType === 'call' ? 'bg-blue-600 border-blue-500' : 'bg-gray-800 border-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              role="tab"
+              aria-selected={optionType === 'call'}
+            >
+              Calls
+            </button>
+            <button
+              type="button"
+              onClick={() => setOptionType('put')}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-md border text-sm ${optionType === 'put' ? 'bg-blue-600 border-blue-500' : 'bg-gray-800 border-gray-600'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              role="tab"
+              aria-selected={optionType === 'put'}
+            >
+              Puts
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-gray-400 mr-2" aria-live="polite">
+              Last fetch: {lastFetchTime ? formatDateTime(lastFetchTime) : '—'}
+            </div>
+            <label className="text-sm text-gray-300" htmlFor="expiry-select">Expiry</label>
             <select
+              id="expiry-select"
               value={selectedExpiry}
               onChange={(e) => setSelectedExpiry(e.target.value)}
-              className="bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={loading}
+              className="bg-gray-800 border border-gray-600 rounded-md px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Expiration date"
             >
+              <option value="">All</option>
               {expiryDates.map(date => (
                 <option key={date} value={date}>
-                  {new Date(date).toLocaleDateString('en-US', { 
-                    month: 'short', 
-                    day: 'numeric', 
-                    year: 'numeric' 
-                  })}
+                  {formatDate(date)}
                 </option>
               ))}
             </select>
+            <button
+              onClick={handleRefresh}
+              disabled={loading}
+              className="ml-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-medium py-1.5 px-3 rounded-md text-sm transition-colors duration-200"
+              aria-label="Refresh data"
+            >
+              {loading ? 'Refreshing...' : 'Refresh Data'}
+            </button>
           </div>
-          
-          <div className="flex-1">
+        </div>
+        {/* Controls */}
+        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 mb-6 items-end">
+          <div className="w-56">
             <label className="block text-sm font-medium text-gray-300 mb-2">Search Strike</label>
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -496,143 +709,158 @@ export default function OptionsChain() {
                 placeholder="Enter strike price..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-10 pr-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                disabled={loading}
+                className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-10 pr-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
           </div>
-
-          <div className="flex items-end">
-            <button
-              onClick={() => fetchOptionsData()}
+          <div className="w-44">
+            <label className="block text-sm font-medium text-gray-300 mb-2" htmlFor="underlying-asset">Underlying Asset</label>
+            <input
+              id="underlying-asset"
+              type="text"
+              inputMode="text"
+              placeholder="e.g. MSTR"
+              value={underlyingAsset}
+              onChange={(e) => setUnderlyingAsset(e.target.value)}
               disabled={loading}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200"
-            >
-              {loading ? 'Refreshing...' : 'Refresh Data'}
-            </button>
+              className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed uppercase"
+              aria-label="Underlying asset ticker"
+            />
+          </div>
+          {/* Inline Filters */}
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Delta</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.01" placeholder="Min" value={deltaMin} onChange={(e) => setDeltaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta min" />
+              <input type="number" step="0.01" placeholder="Max" value={deltaMax} onChange={(e) => setDeltaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Gamma</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.0001" placeholder="Min" value={gammaMin} onChange={(e) => setGammaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma min" />
+              <input type="number" step="0.0001" placeholder="Max" value={gammaMax} onChange={(e) => setGammaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Theta</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.01" placeholder="Min" value={thetaMin} onChange={(e) => setThetaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta min" />
+              <input type="number" step="0.01" placeholder="Max" value={thetaMax} onChange={(e) => setThetaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Vega</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.01" placeholder="Min" value={vegaMin} onChange={(e) => setVegaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega min" />
+              <input type="number" step="0.01" placeholder="Max" value={vegaMax} onChange={(e) => setVegaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Volume</label>
+            <div className="flex gap-2">
+              <input type="number" step="1" placeholder="Min" value={volumeMin} onChange={(e) => setVolumeMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume min" />
+              <input type="number" step="1" placeholder="Max" value={volumeMax} onChange={(e) => setVolumeMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Open Interest</label>
+            <div className="flex gap-2">
+              <input type="number" step="1" placeholder="Min" value={openInterestMin} onChange={(e) => setOpenInterestMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest min" />
+              <input type="number" step="1" placeholder="Max" value={openInterestMax} onChange={(e) => setOpenInterestMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest max" />
+            </div>
+          </div>
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">IV %</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.1" placeholder="Min %" value={ivMin} onChange={(e) => setIvMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV min percent" />
+              <input type="number" step="0.1" placeholder="Max %" value={ivMax} onChange={(e) => setIvMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV max percent" />
+            </div>
           </div>
         </div>
 
-        {/* Options Chain */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Calls */}
-          <div className="bg-gray-800 rounded-lg border border-gray-700">
-            <div className="bg-green-900/20 border-b border-gray-700 p-4">
-              <h2 className="text-lg font-semibold text-green-400">Calls</h2>
-            </div>
-            
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-700">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('strike')}>
-                      <div className="flex items-center space-x-1">
-                        <span>Strike</span>
-                        {sortBy === 'strike' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Bid</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Ask</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('volume')}>
-                      <div className="flex items-center space-x-1">
-                        <span>Vol</span>
-                        {sortBy === 'volume' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('oi')}>
-                      <div className="flex items-center space-x-1">
-                        <span>OI</span>
-                        {sortBy === 'oi' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('iv')}>
-                      <div className="flex items-center space-x-1">
-                        <span>IV</span>
-                        {sortBy === 'iv' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700">
-                  {sortedCalls.map((option) => (
-                    <OptionRow 
-                      key={option.contract_id} 
-                      option={option} 
-                      isExpanded={expandedOptions.has(option.contract_id)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        {/* Filters are shown inline above; removed toggle section */}
 
-          {/* Puts */}
-          <div className="bg-gray-800 rounded-lg border border-gray-700">
-            <div className="bg-red-900/20 border-b border-gray-700 p-4">
-              <h2 className="text-lg font-semibold text-red-400">Puts</h2>
-            </div>
-            
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-700">
-                  <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('strike')}>
-                      <div className="flex items-center space-x-1">
-                        <span>Strike</span>
-                        {sortBy === 'strike' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Bid</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Ask</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('volume')}>
-                      <div className="flex items-center space-x-1">
-                        <span>Vol</span>
-                        {sortBy === 'volume' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('oi')}>
-                      <div className="flex items-center space-x-1">
-                        <span>OI</span>
-                        {sortBy === 'oi' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('iv')}>
-                      <div className="flex items-center space-x-1">
-                        <span>IV</span>
-                        {sortBy === 'iv' && (
-                          sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
-                        )}
-                      </div>
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Score</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-700">
-                  {sortedPuts.map((option) => (
-                    <OptionRow 
-                      key={option.contract_id} 
-                      option={option} 
-                      isExpanded={expandedOptions.has(option.contract_id)}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        {/* Options List (Score Desc) */}
+        <div className="bg-gray-800 rounded-lg border border-gray-700 relative">
+          <div className="border-b border-gray-700 p-4">
+            <h2 className="text-lg font-semibold flex items-center justify-between">
+              <span>Options (sorted by Score)</span>
+              <span className="text-sm font-normal text-gray-400">{sortedOptions.length} options loaded</span>
+            </h2>
           </div>
+          <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+            <table className="w-full">
+              <thead className="bg-gray-700 sticky top-0 z-10">
+                <tr>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Contract</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Type</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Expiry</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('strike_price')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Strike</span>
+                      {sortBy === 'strike_price' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Bid</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Ask</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('volume')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Vol</span>
+                      {sortBy === 'volume' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('open_interest')}>
+                    <div className="flex items-center space-x-1">
+                      <span>OI</span>
+                      {sortBy === 'open_interest' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('implied_volatility')}>
+                    <div className="flex items-center space-x-1">
+                      <span>IV</span>
+                      {sortBy === 'implied_volatility' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('score')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Score</span>
+                      {sortBy === 'score' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700">
+                {sortedOptions.map((option) => (
+                  <OptionRow 
+                    key={option.contract_id} 
+                    option={option} 
+                    isExpanded={expandedOptions.has(option.contract_id)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {loading && (
+            <div className="absolute inset-0 bg-gray-900/50 backdrop-blur-[1px] z-20 flex items-center justify-center">
+              <div className="flex items-center gap-3 text-sm text-gray-200">
+                <div className="h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                <span>Refreshing data…</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Greeks Info */}
