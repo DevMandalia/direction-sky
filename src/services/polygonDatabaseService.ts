@@ -911,7 +911,7 @@ export class PolygonDatabaseService {
             is_standard = source.is_standard,
             data_source = source.data_source,
             data_quality_score = source.data_quality_score,
-            last_updated = source.last_updated,
+            last_updated = CURRENT_TIMESTAMP(),
             raw_data = source.raw_data,
             created_at = source.created_at
         WHEN NOT MATCHED THEN
@@ -941,7 +941,7 @@ export class PolygonDatabaseService {
             source.probability_itm, source.probability_otm, source.max_loss, source.max_profit, source.break_even_price, source.score,
             source.quote_timestamp, source.trade_timestamp, source.participant_timestamp, source.chain_timestamp, source.exchange,
             source.conditions, source.market_center, source.tick_size, source.lot_size, source.is_penny, source.is_weekly, source.is_monthly,
-            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, source.last_updated, source.raw_data, TIMESTAMP(source.created_at)
+            source.is_quarterly, source.is_standard, source.data_source, source.data_quality_score, source.insert_timestamp, CURRENT_TIMESTAMP(), source.raw_data, TIMESTAMP(source.created_at)
           )
       `;
 
@@ -1200,7 +1200,7 @@ export class PolygonDatabaseService {
             is_standard = source.is_standard,
             data_source = source.data_source,
             data_quality_score = source.data_quality_score,
-            last_updated = source.last_updated,
+            last_updated = CURRENT_TIMESTAMP(),
             raw_data = source.raw_data,
             created_at = source.created_at
         WHEN NOT MATCHED THEN

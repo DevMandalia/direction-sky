@@ -3,9 +3,8 @@
 import React from 'react'
 import { format, parseISO, isValid as isValidDate } from 'date-fns'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { 
-  MagnifyingGlassIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ChevronRightIcon,
@@ -51,8 +50,12 @@ export default function OptionsChain() {
   const [selectedExpiry, setSelectedExpiry] = useState<string>('')
   const [expiryDates, setExpiryDates] = useState<string[]>([])
   const [optionType, setOptionType] = useState<'all' | 'call' | 'put'>('all')
-  const [searchTerm, setSearchTerm] = useState('')
-  const [sortBy, setSortBy] = useState<'score' | 'strike_price' | 'volume' | 'open_interest' | 'implied_volatility'>('score')
+  // Strike range (debounced to avoid lag while typing)
+  const [strikeMin, setStrikeMin] = useState<string>('')
+  const [strikeMax, setStrikeMax] = useState<string>('')
+  const [strikeMinInput, setStrikeMinInput] = useState<string>('')
+  const [strikeMaxInput, setStrikeMaxInput] = useState<string>('')
+  const [sortBy, setSortBy] = useState<'score' | 'strike_price' | 'volume' | 'open_interest' | 'implied_volatility' | 'delta' | 'gamma' | 'theta' | 'vega'>('score')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [expandedOptions, setExpandedOptions] = useState<Set<string>>(new Set())
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date())
@@ -60,20 +63,35 @@ export default function OptionsChain() {
 
   // Filters state
   const [underlyingAsset, setUnderlyingAsset] = useState<string>('')
+  const [underlyingAssetInput, setUnderlyingAssetInput] = useState<string>('')
   const [deltaMin, setDeltaMin] = useState<string>('')
   const [deltaMax, setDeltaMax] = useState<string>('')
+  const [deltaMinInput, setDeltaMinInput] = useState<string>('')
+  const [deltaMaxInput, setDeltaMaxInput] = useState<string>('')
   const [gammaMin, setGammaMin] = useState<string>('')
   const [gammaMax, setGammaMax] = useState<string>('')
+  const [gammaMinInput, setGammaMinInput] = useState<string>('')
+  const [gammaMaxInput, setGammaMaxInput] = useState<string>('')
   const [thetaMin, setThetaMin] = useState<string>('')
   const [thetaMax, setThetaMax] = useState<string>('')
+  const [thetaMinInput, setThetaMinInput] = useState<string>('')
+  const [thetaMaxInput, setThetaMaxInput] = useState<string>('')
   const [vegaMin, setVegaMin] = useState<string>('')
   const [vegaMax, setVegaMax] = useState<string>('')
+  const [vegaMinInput, setVegaMinInput] = useState<string>('')
+  const [vegaMaxInput, setVegaMaxInput] = useState<string>('')
   const [volumeMin, setVolumeMin] = useState<string>('')
   const [volumeMax, setVolumeMax] = useState<string>('')
+  const [volumeMinInput, setVolumeMinInput] = useState<string>('')
+  const [volumeMaxInput, setVolumeMaxInput] = useState<string>('')
   const [openInterestMin, setOpenInterestMin] = useState<string>('')
   const [openInterestMax, setOpenInterestMax] = useState<string>('')
+  const [openInterestMinInput, setOpenInterestMinInput] = useState<string>('')
+  const [openInterestMaxInput, setOpenInterestMaxInput] = useState<string>('')
   const [ivMin, setIvMin] = useState<string>('') // percent
   const [ivMax, setIvMax] = useState<string>('') // percent
+  const [ivMinInput, setIvMinInput] = useState<string>('')
+  const [ivMaxInput, setIvMaxInput] = useState<string>('')
 
   const formatDate = (value: any) => {
     if (!value) return '-'
@@ -128,6 +146,8 @@ export default function OptionsChain() {
       console.error('Error triggering ingest:', e)
     } finally {
       await fetchOptionsData()
+      // Reflect manual refresh immediately, regardless of backend lag
+      setLastFetchTime(new Date())
       await fetchLastFetchTime()
       setLoading(false)
     }
@@ -143,7 +163,7 @@ export default function OptionsChain() {
       
       // Build query with optional filters
       const conditions: string[] = []
-      const parameters: { name: string; value: string }[] = []
+      const parameters: { name: string; value: any }[] = []
       if (selectedExpiry) {
         conditions.push('expiration_date = @expiry_date')
         parameters.push({ name: 'expiry_date', value: selectedExpiry })
@@ -152,32 +172,7 @@ export default function OptionsChain() {
         conditions.push('contract_type = @contract_type')
         parameters.push({ name: 'contract_type', value: optionType })
       }
-      if (underlyingAsset) {
-        conditions.push('underlying_asset = @underlying_asset')
-        parameters.push({ name: 'underlying_asset', value: underlyingAsset.toUpperCase() })
-      }
-      // Numeric range filters (server-side when provided)
-      const addNumericFilter = (field: string, minStr: string, maxStr: string, isPercent = false) => {
-        const minVal = minStr.trim() === '' ? null : parseFloat(minStr)
-        const maxVal = maxStr.trim() === '' ? null : parseFloat(maxStr)
-        const toServer = (v: number) => isPercent ? String(v / 100) : String(v)
-        if (minVal !== null && !Number.isNaN(minVal)) {
-          conditions.push(`${field} >= @${field}_min`)
-          parameters.push({ name: `${field}_min`, value: toServer(minVal) })
-        }
-        if (maxVal !== null && !Number.isNaN(maxVal)) {
-          conditions.push(`${field} <= @${field}_max`)
-          parameters.push({ name: `${field}_max`, value: toServer(maxVal) })
-        }
-      }
-
-      addNumericFilter('delta', deltaMin, deltaMax)
-      addNumericFilter('gamma', gammaMin, gammaMax)
-      addNumericFilter('theta', thetaMin, thetaMax)
-      addNumericFilter('vega', vegaMin, vegaMax)
-      addNumericFilter('volume', volumeMin, volumeMax)
-      addNumericFilter('open_interest', openInterestMin, openInterestMax)
-      addNumericFilter('implied_volatility', ivMin, ivMax, true)
+      // Client-only filtering for underlying/greeks/strike/volume/OI/IV
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
       const response = await fetch(`${BIGQUERY_API_BASE}/api/polygon-options`, {
@@ -323,8 +318,16 @@ export default function OptionsChain() {
         },
         body: JSON.stringify({
           query: `
-            SELECT MAX(last_updated) AS last_updated
+            SELECT MAX(
+              GREATEST(
+                COALESCE(last_updated, TIMESTAMP('1970-01-01')),
+                COALESCE(quote_timestamp, TIMESTAMP('1970-01-01')),
+                COALESCE(trade_timestamp, TIMESTAMP('1970-01-01')),
+                COALESCE(insert_timestamp, TIMESTAMP('1970-01-01'))
+              )
+            ) AS last_ts
             FROM \`dev-epsilon-467101-v2.direction_sky_data.polygon_options\`
+            WHERE DATE(insert_timestamp) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
           `,
           parameters: []
         })
@@ -335,10 +338,15 @@ export default function OptionsChain() {
       }
 
       const data = await response.json()
-      const raw = data.rows?.[0]?.last_updated ?? data.rows?.[0]?.last_updated?.value
+      const raw = data.rows?.[0]?.last_ts ?? data.rows?.[0]?.last_ts?.value
       if (raw) {
         const parsed = typeof raw === 'string' ? new Date(raw) : (raw?.value ? new Date(raw.value) : new Date(raw))
-        if (!isNaN(parsed.getTime())) setLastFetchTime(parsed)
+        if (!isNaN(parsed.getTime())) {
+          setLastFetchTime((prev) => {
+            if (!prev) return parsed
+            return prev > parsed ? prev : parsed
+          })
+        }
       }
     } catch (e) {
       // Non-fatal; just leave lastFetchTime as-is
@@ -391,7 +399,20 @@ export default function OptionsChain() {
   // Refetch when filters change
   useEffect(() => {
     fetchOptionsData()
-  }, [selectedExpiry, optionType, underlyingAsset, deltaMin, deltaMax, gammaMin, gammaMax, thetaMin, thetaMax, vegaMin, vegaMax, volumeMin, volumeMax, openInterestMin, openInterestMax, ivMin, ivMax])
+  }, [selectedExpiry, optionType])
+
+  const handleApplyFilters = () => {
+    setUnderlyingAsset(underlyingAssetInput)
+    setStrikeMin(strikeMinInput)
+    setStrikeMax(strikeMaxInput)
+    setDeltaMin(deltaMinInput); setDeltaMax(deltaMaxInput)
+    setGammaMin(gammaMinInput); setGammaMax(gammaMaxInput)
+    setThetaMin(thetaMinInput); setThetaMax(thetaMaxInput)
+    setVegaMin(vegaMinInput); setVegaMax(vegaMaxInput)
+    setVolumeMin(volumeMinInput); setVolumeMax(volumeMaxInput)
+    setOpenInterestMin(openInterestMinInput); setOpenInterestMax(openInterestMaxInput)
+    setIvMin(ivMinInput); setIvMax(ivMaxInput)
+  }
 
   const withinRange = (value: number | undefined, minStr: string, maxStr: string, isPercent = false) => {
     const hasFilter = (minStr.trim() !== '' || maxStr.trim() !== '')
@@ -405,11 +426,11 @@ export default function OptionsChain() {
     return true
   }
 
-  const filteredData = optionsData.filter(option => {
-    if (searchTerm && !option.strike_price.toString().includes(searchTerm)) return false
+  const filteredData = useMemo(() => optionsData.filter(option => {
     if (optionType !== 'all' && option.contract_type !== optionType) return false
     if (selectedExpiry && option.expiration_date !== selectedExpiry) return false
     if (underlyingAsset && option.underlying_asset?.toUpperCase() !== underlyingAsset.toUpperCase()) return false
+    if (!withinRange(option.strike_price, strikeMin, strikeMax)) return false
     if (!withinRange(option.delta, deltaMin, deltaMax)) return false
     if (!withinRange(option.gamma, gammaMin, gammaMax)) return false
     if (!withinRange(option.theta, thetaMin, thetaMax)) return false
@@ -418,9 +439,9 @@ export default function OptionsChain() {
     if (!withinRange(option.open_interest, openInterestMin, openInterestMax)) return false
     if (!withinRange(option.implied_volatility, ivMin, ivMax, true)) return false
     return true
-  })
+  }), [optionsData, optionType, selectedExpiry, underlyingAsset, strikeMin, strikeMax, deltaMin, deltaMax, gammaMin, gammaMax, thetaMin, thetaMax, vegaMin, vegaMax, volumeMin, volumeMax, openInterestMin, openInterestMax, ivMin, ivMax])
 
-  const sortedOptions = [...filteredData].sort((a, b) => {
+  const sortedOptions = useMemo(() => [...filteredData].sort((a, b) => {
     const aValue = (a as any)[sortBy] ?? -Infinity
     const bValue = (b as any)[sortBy] ?? -Infinity
     if (aValue === bValue) {
@@ -428,7 +449,7 @@ export default function OptionsChain() {
       return a.strike_price - b.strike_price
     }
     return sortOrder === 'asc' ? (aValue > bValue ? 1 : -1) : (aValue < bValue ? 1 : -1)
-  })
+  }), [filteredData, sortBy, sortOrder])
 
   const handleSort = (field: typeof sortBy) => {
     if (sortBy === field) {
@@ -439,7 +460,7 @@ export default function OptionsChain() {
     }
   }
 
-  const toggleOptionExpansion = (contractId: string) => {
+  const toggleOptionExpansion = useCallback((contractId: string) => {
     const newExpanded = new Set(expandedOptions)
     if (newExpanded.has(contractId)) {
       newExpanded.delete(contractId)
@@ -447,9 +468,9 @@ export default function OptionsChain() {
       newExpanded.add(contractId)
     }
     setExpandedOptions(newExpanded)
-  }
+  }, [expandedOptions])
 
-  const OptionRow = ({ option, isExpanded }: { option: OptionsData; isExpanded: boolean }) => (
+  const OptionRow = React.memo(({ option, isExpanded }: { option: OptionsData; isExpanded: boolean }) => (
     <>
       <tr 
         key={option.contract_id} 
@@ -480,6 +501,10 @@ export default function OptionsChain() {
         <td className="px-2 py-1 text-[12px]">${option.strike_price}</td>
         <td className="px-2 py-1 text-[12px] text-green-400">${option.bid?.toFixed(2) || '-'}</td>
         <td className="px-2 py-1 text-[12px] text-red-400">${option.ask?.toFixed(2) || '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{typeof option.gamma === 'number' ? option.gamma.toFixed(4) : '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{typeof option.delta === 'number' ? option.delta.toFixed(4) : '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{typeof option.theta === 'number' ? option.theta.toFixed(4) : '-'}</td>
+        <td className="px-2 py-1 text-[12px]">{typeof option.vega === 'number' ? option.vega.toFixed(4) : '-'}</td>
         <td className="px-2 py-1 text-[12px]">{option.volume?.toLocaleString() || '-'}</td>
         <td className="px-2 py-1 text-[12px]">{option.open_interest?.toLocaleString() || '-'}</td>
         <td className="px-2 py-1 text-[12px]">{typeof option.implied_volatility === 'number' ? `${(option.implied_volatility * 100).toFixed(1)}%` : '-'}</td>
@@ -577,7 +602,7 @@ export default function OptionsChain() {
         </tr>
       )}
     </>
-  )
+  ))
 
   if (loading && optionsData.length === 0) {
     return (
@@ -700,18 +725,12 @@ export default function OptionsChain() {
         </div>
         {/* Controls */}
         <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 mb-6 items-end">
-          <div className="w-56">
-            <label className="block text-sm font-medium text-gray-300 mb-2">Search Strike</label>
-            <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Enter strike price..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                disabled={loading}
-                className="w-full bg-gray-800 border border-gray-600 rounded-lg pl-10 pr-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              />
+          {/* Strike range */}
+          <div className="max-w-56 w-56">
+            <label className="block text-sm font-medium text-gray-300 mb-1">Strike</label>
+            <div className="flex gap-2">
+              <input type="number" step="0.01" placeholder="Min" value={strikeMinInput} onChange={(e) => setStrikeMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Strike min" />
+              <input type="number" step="0.01" placeholder="Max" value={strikeMaxInput} onChange={(e) => setStrikeMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Strike max" />
             </div>
           </div>
           <div className="w-44">
@@ -721,8 +740,8 @@ export default function OptionsChain() {
               type="text"
               inputMode="text"
               placeholder="e.g. MSTR"
-              value={underlyingAsset}
-              onChange={(e) => setUnderlyingAsset(e.target.value)}
+              value={underlyingAssetInput}
+              onChange={(e) => setUnderlyingAssetInput(e.target.value)}
               disabled={loading}
               className="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed uppercase"
               aria-label="Underlying asset ticker"
@@ -732,51 +751,62 @@ export default function OptionsChain() {
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Delta</label>
             <div className="flex gap-2">
-              <input type="number" step="0.01" placeholder="Min" value={deltaMin} onChange={(e) => setDeltaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta min" />
-              <input type="number" step="0.01" placeholder="Max" value={deltaMax} onChange={(e) => setDeltaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta max" />
+              <input type="number" step="0.01" placeholder="Min" value={deltaMinInput} onChange={(e) => setDeltaMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta min" />
+              <input type="number" step="0.01" placeholder="Max" value={deltaMaxInput} onChange={(e) => setDeltaMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Delta max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Gamma</label>
             <div className="flex gap-2">
-              <input type="number" step="0.0001" placeholder="Min" value={gammaMin} onChange={(e) => setGammaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma min" />
-              <input type="number" step="0.0001" placeholder="Max" value={gammaMax} onChange={(e) => setGammaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma max" />
+              <input type="number" step="0.0001" placeholder="Min" value={gammaMinInput} onChange={(e) => setGammaMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma min" />
+              <input type="number" step="0.0001" placeholder="Max" value={gammaMaxInput} onChange={(e) => setGammaMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Gamma max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Theta</label>
             <div className="flex gap-2">
-              <input type="number" step="0.01" placeholder="Min" value={thetaMin} onChange={(e) => setThetaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta min" />
-              <input type="number" step="0.01" placeholder="Max" value={thetaMax} onChange={(e) => setThetaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta max" />
+              <input type="number" step="0.01" placeholder="Min" value={thetaMinInput} onChange={(e) => setThetaMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta min" />
+              <input type="number" step="0.01" placeholder="Max" value={thetaMaxInput} onChange={(e) => setThetaMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Theta max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Vega</label>
             <div className="flex gap-2">
-              <input type="number" step="0.01" placeholder="Min" value={vegaMin} onChange={(e) => setVegaMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega min" />
-              <input type="number" step="0.01" placeholder="Max" value={vegaMax} onChange={(e) => setVegaMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega max" />
+              <input type="number" step="0.01" placeholder="Min" value={vegaMinInput} onChange={(e) => setVegaMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega min" />
+              <input type="number" step="0.01" placeholder="Max" value={vegaMaxInput} onChange={(e) => setVegaMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Vega max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Volume</label>
             <div className="flex gap-2">
-              <input type="number" step="1" placeholder="Min" value={volumeMin} onChange={(e) => setVolumeMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume min" />
-              <input type="number" step="1" placeholder="Max" value={volumeMax} onChange={(e) => setVolumeMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume max" />
+              <input type="number" step="1" placeholder="Min" value={volumeMinInput} onChange={(e) => setVolumeMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume min" />
+              <input type="number" step="1" placeholder="Max" value={volumeMaxInput} onChange={(e) => setVolumeMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Volume max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">Open Interest</label>
             <div className="flex gap-2">
-              <input type="number" step="1" placeholder="Min" value={openInterestMin} onChange={(e) => setOpenInterestMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest min" />
-              <input type="number" step="1" placeholder="Max" value={openInterestMax} onChange={(e) => setOpenInterestMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest max" />
+              <input type="number" step="1" placeholder="Min" value={openInterestMinInput} onChange={(e) => setOpenInterestMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest min" />
+              <input type="number" step="1" placeholder="Max" value={openInterestMaxInput} onChange={(e) => setOpenInterestMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="Open interest max" />
             </div>
           </div>
           <div className="max-w-56 w-56">
             <label className="block text-sm font-medium text-gray-300 mb-1">IV %</label>
             <div className="flex gap-2">
-              <input type="number" step="0.1" placeholder="Min %" value={ivMin} onChange={(e) => setIvMin(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV min percent" />
-              <input type="number" step="0.1" placeholder="Max %" value={ivMax} onChange={(e) => setIvMax(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV max percent" />
+              <input type="number" step="0.1" placeholder="Min %" value={ivMinInput} onChange={(e) => setIvMinInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV min percent" />
+              <input type="number" step="0.1" placeholder="Max %" value={ivMaxInput} onChange={(e) => setIvMaxInput(e.target.value)} className="w-1/2 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" aria-label="IV max percent" />
             </div>
+          </div>
+          <div className="w-56 flex items-end justify-end">
+            <button
+              type="button"
+              onClick={handleApplyFilters}
+              disabled={loading}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200"
+              aria-label="Apply filters"
+            >
+              {loading ? 'Filtering…' : 'Filter'}
+            </button>
           </div>
         </div>
 
@@ -807,6 +837,38 @@ export default function OptionsChain() {
                   </th>
                   <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Bid</th>
                   <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider">Ask</th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('gamma')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Gamma</span>
+                      {sortBy === 'gamma' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('delta')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Delta</span>
+                      {sortBy === 'delta' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('theta')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Theta</span>
+                      {sortBy === 'theta' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
+                  <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('vega')}>
+                    <div className="flex items-center space-x-1">
+                      <span>Vega</span>
+                      {sortBy === 'vega' && (
+                        sortOrder === 'asc' ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />
+                      )}
+                    </div>
+                  </th>
                   <th className="px-2 py-1 text-left text-[11px] sm:text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer" onClick={() => handleSort('volume')}>
                     <div className="flex items-center space-x-1">
                       <span>Vol</span>
@@ -839,7 +901,6 @@ export default function OptionsChain() {
                       )}
                     </div>
                   </th>
-                  
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-700">

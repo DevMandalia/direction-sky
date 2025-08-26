@@ -23,6 +23,7 @@ ENV NEXT_PUBLIC_BIGQUERY_API_KEY=${NEXT_PUBLIC_BIGQUERY_API_KEY}
 # Use Next.js standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
 EXPOSE 8080
 ENV PORT=8080
 CMD ["node","server.js"]
