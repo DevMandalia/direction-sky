@@ -254,6 +254,7 @@ gcloud functions deploy x-fetcher \
 # Get the function URL for the scheduler
 print_status "Getting function URL for scheduler..."
 FRED_FUNCTION_URL=$(gcloud functions describe fred-fetcher --region=$REGION --format='value(httpsTrigger.url)')
+X_FUNCTION_URL=$(gcloud functions describe x-fetcher --region=$REGION --format='value(httpsTrigger.url)')
 
 # Create Cloud Scheduler job (delete if exists first)
 print_status "Deleting legacy data-ingestion scheduler if it exists..."
@@ -281,6 +282,32 @@ else
         --location=$REGION \
         --project=$PROJECT_ID \
         --description="Triggers FRED data ingestion hourly" \
+        --headers="Content-Type=application/json"
+fi
+
+# Create/Update Cloud Scheduler job for X fetcher (hourly)
+print_status "Setting up hourly X Cloud Scheduler job..."
+if gcloud scheduler jobs describe x-ingestion-hourly --location=$REGION 2>/dev/null; then
+    print_status "Updating existing X scheduler job..."
+    gcloud scheduler jobs update http x-ingestion-hourly \
+        --schedule="0 * * * *" \
+        --time-zone="UTC" \
+        --uri="$X_FUNCTION_URL" \
+        --http-method=POST \
+        --location=$REGION \
+        --project=$PROJECT_ID \
+        --description="Triggers X sentiment data ingestion hourly" \
+        --headers="Content-Type=application/json"
+else
+    print_status "Creating new X scheduler job..."
+    gcloud scheduler jobs create http x-ingestion-hourly \
+        --schedule="0 * * * *" \
+        --time-zone="UTC" \
+        --uri="$X_FUNCTION_URL" \
+        --http-method=POST \
+        --location=$REGION \
+        --project=$PROJECT_ID \
+        --description="Triggers X sentiment data ingestion hourly" \
         --headers="Content-Type=application/json"
 fi
 
