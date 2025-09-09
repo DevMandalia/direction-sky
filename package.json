@@ -18,6 +18,7 @@
     "deploy:scheduler": "gcloud scheduler jobs create http data-ingestion-scheduler --location=us-central1 --schedule='*/5 * * * *' --uri='https://us-central1-dev-epsilon-467101-v2.cloudfunctions.net/data-ingestion' --http-method=POST --message-body='{\"source\":\"scheduler\"}' --description='Data ingestion scheduler - every 5 minutes'",
     "deploy:polygon": "node scripts/deploy-polygon.js",
     "deploy:polygon-scheduler": "node scripts/setup-polygon-scheduler.js",
+    "deploy:coinmarketcap-scheduler": "node scripts/setup-coinmarketcap-scheduler.js",
     "deploy:script": "node scripts/fetch-and-store-coinmarketcap.js",
     "logs": "gcloud functions logs read data-ingestion --limit=50",
     "logs:polygon": "gcloud functions logs read polygon-options-fetcher --limit=50",
