@@ -441,6 +441,12 @@ export class PolygonDatabaseService {
 
   // Format options row for BigQuery with comprehensive data
   private formatOptionsRow(contract: any, contractType: string, underlyingAsset: string): any {
+    const truncateTo4Decimals = (value: unknown): number | null => {
+      if (value === null || value === undefined) return null;
+      const num = Number(value);
+      if (!Number.isFinite(num)) return null;
+      return Math.trunc(num * 10000) / 10000;
+    };
     // Handle both unified and regular contract formats
     const contractData = contract.contract || contract;
     const greeksData = contract.greeks || contract;
@@ -493,19 +499,19 @@ export class PolygonDatabaseService {
       underlying_price: null, // Not available from Options Chain API
       underlying_timestamp: null,
       
-      // Comprehensive Greeks - extract from greeks object
-      delta: greeksData.delta || null,
-      gamma: greeksData.gamma || null,
-      theta: greeksData.theta || null,
-      vega: greeksData.vega || null,
-      rho: greeksData.rho || null,
+      // Comprehensive Greeks - preserve zeros and truncate to 4 decimals
+      delta: truncateTo4Decimals(greeksData.delta ?? null),
+      gamma: truncateTo4Decimals(greeksData.gamma ?? null),
+      theta: truncateTo4Decimals(greeksData.theta ?? null),
+      vega: truncateTo4Decimals(greeksData.vega ?? null),
+      rho: greeksData.rho ?? null,
       
-      // Advanced Greeks (if available)
-      lambda: greeksData.lambda || null,
-      epsilon: greeksData.epsilon || null,
-      charm: greeksData.charm || null,
-      vanna: greeksData.vanna || null,
-      volga: greeksData.volga || null,
+      // Advanced Greeks (if available) - preserve zeros
+      lambda: greeksData.lambda ?? null,
+      epsilon: greeksData.epsilon ?? null,
+      charm: greeksData.charm ?? null,
+      vanna: greeksData.vanna ?? null,
+      volga: greeksData.volga ?? null,
       
       // Quote Data (NBBO) - use available quote data
       bid: bid,
@@ -525,7 +531,7 @@ export class PolygonDatabaseService {
       // Market Data - extract from day data and other fields
       volume: dayData.volume || contract.volume || null,
       open_interest: contract.open_interest || null,
-      implied_volatility: contract.implied_volatility || null,
+      implied_volatility: truncateTo4Decimals(contract.implied_volatility ?? null),
       historical_volatility: contract.historical_volatility || null,
       min_av: contract.min_av?.av || null,
       min_av_timestamp: contract.min_av?.t ? new Date(contract.min_av.t) : null,

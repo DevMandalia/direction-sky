@@ -134,6 +134,39 @@ const polygonConfig: PolygonConfig = {
 
 ## 💾 Data Storage
 
+## 🧭 BigQuery Insert/Upsert Flow (Polygon Options)
+
+The following sequence illustrates how the Polygon options fetcher stores data into BigQuery using a MERGE upsert keyed by `contract_id` + `date`.
+
+```mermaid
+sequenceDiagram
+  participant UI as "Caller (HTTP)"
+  participant Fetcher as "polygonOptionsDataFetcher"
+  participant Poly as "PolygonAPIClient"
+  participant DB as "PolygonDatabaseService"
+  participant BQ as "BigQuery"
+
+  UI->>Fetcher: POST /?action=fetch-and-store&symbol=...[&expiry=YYYY-MM-DD]
+  Fetcher->>Poly: getStockSnapshot(symbol)
+  Poly-->>Fetcher: StockSnapshot
+  Fetcher->>Poly: getOptionChainSnapshot(symbol)
+  Poly-->>Fetcher: OptionChainSnapshot
+  alt Expiry filter present?
+    Fetcher->>Fetcher: Filter contracts by expiration_date
+  end
+  Fetcher->>DB: storeOptionsData(snapshot)
+  DB->>DB: formatOptionsRow(contract, type, underlying) x N
+  DB->>DB: upsertOptionsBatch(rows of 100)
+  DB->>BQ: MERGE project.dataset.polygon_options ON (contract_id, date)
+  BQ-->>DB: UPDATE existing or INSERT new
+  DB-->>Fetcher: Done
+  Fetcher-->>UI: Success response
+```
+
+Notes
+- **Composite key**: `contract_id` + `date` ensures idempotent daily upserts per contract.
+- **Batching**: rows are merged in batches of 100 to avoid payload limits.
+
 ### **BigQuery Tables**
 1. **`polygon_options`**: All options contract data
 2. **`polygon_stocks`**: Stock market data

@@ -618,8 +618,15 @@ class PolygonDatabaseService {
             return null;
         }
         const daysToExpiration = expiryDate ? Math.max(0, Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))) : null;
-        // Skip moneyness, intrinsic/extrinsic values, and leverage calculations since we don't have underlying price
-        // Focus on the data that IS available from the API
+        // Truncate helper
+        const truncateTo4 = (v) => {
+            if (v === null || v === undefined)
+                return null;
+            const n = Number(v);
+            if (!Number.isFinite(n))
+                return null;
+            return Math.trunc(n * 10000) / 10000;
+        };
         // Calculate spread and mid-price from available quote data
         const bid = quoteData.bid || dayData.close || null;
         const ask = quoteData.ask || dayData.close || null;
@@ -634,7 +641,6 @@ class PolygonDatabaseService {
         const chainUnderlyingTs = underlyingAssetInfo && underlyingAssetInfo.timestamp
             ? new Date(underlyingAssetInfo.timestamp)
             : null;
-
         // Calculate the options score using available data
         const score = this.calculateOptionsScore(contract);
         return {
@@ -653,18 +659,18 @@ class PolygonDatabaseService {
             // Underlying Asset Data - sourced from options chain snapshot when available
             underlying_price: chainUnderlyingPrice,
             underlying_timestamp: chainUnderlyingTs,
-            // Comprehensive Greeks - extract from greeks object
-            delta: greeksData.delta || null,
-            gamma: greeksData.gamma || null,
-            theta: greeksData.theta || null,
-            vega: greeksData.vega || null,
-            rho: greeksData.rho || null,
-            // Advanced Greeks (if available)
-            lambda: greeksData.lambda || null,
-            epsilon: greeksData.epsilon || null,
-            charm: greeksData.charm || null,
-            vanna: greeksData.vanna || null,
-            volga: greeksData.volga || null,
+            // Comprehensive Greeks - truncate to 4 decimals preserving zeros
+            delta: truncateTo4(greeksData.delta ?? null),
+            gamma: truncateTo4(greeksData.gamma ?? null),
+            theta: truncateTo4(greeksData.theta ?? null),
+            vega: truncateTo4(greeksData.vega ?? null),
+            rho: greeksData.rho ?? null,
+            // Advanced Greeks (if available) - preserve zeros
+            lambda: greeksData.lambda ?? null,
+            epsilon: greeksData.epsilon ?? null,
+            charm: greeksData.charm ?? null,
+            vanna: greeksData.vanna ?? null,
+            volga: greeksData.volga ?? null,
             // Quote Data (NBBO) - use available quote data
             bid: bid,
             ask: ask,
@@ -683,7 +689,7 @@ class PolygonDatabaseService {
             // Market Data - extract from day data and other fields
             volume: dayData.volume || contract.volume || null,
             open_interest: contract.open_interest || null,
-            implied_volatility: contract.implied_volatility || null,
+            implied_volatility: truncateTo4(contract.implied_volatility ?? null),
             historical_volatility: contract.historical_volatility || null,
             min_av: contract.min_av?.av || null,
             min_av_timestamp: contract.min_av?.t ? new Date(contract.min_av.t) : null,
@@ -804,6 +810,14 @@ class PolygonDatabaseService {
     }
     // Format real-time row for BigQuery
     formatRealTimeRow(data) {
+        const truncateTo4 = (v) => {
+            if (v === null || v === undefined)
+                return null;
+            const n = Number(v);
+            if (!Number.isFinite(n))
+                return null;
+            return Math.trunc(n * 10000) / 10000;
+        };
         return {
             timestamp: new Date(),
             event_type: data.event,
@@ -816,13 +830,13 @@ class PolygonDatabaseService {
             ask_size: data.data.ask_size || null,
             price: data.data.price || null,
             size: data.data.size || null,
-            // Greeks
-            delta: data.data.delta || null,
-            gamma: data.data.gamma || null,
-            theta: data.data.theta || null,
-            vega: data.data.vega || null,
+            // Greeks (truncate)
+            delta: truncateTo4(data.data.delta ?? null),
+            gamma: truncateTo4(data.data.gamma ?? null),
+            theta: truncateTo4(data.data.theta ?? null),
+            vega: truncateTo4(data.data.vega ?? null),
             rho: data.data.rho || null,
-            implied_volatility: data.data.implied_volatility || null,
+            implied_volatility: truncateTo4(data.data.implied_volatility ?? null),
             // Metadata
             raw_data: JSON.stringify(data),
             created_at: new Date()
