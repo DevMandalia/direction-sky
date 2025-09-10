@@ -20,12 +20,10 @@ const SCHEDULERS = [
     description: 'Triggers Polygon.io options chain upsert hourly during market hours',
     schedule: '0 9-16 * * 1-5', // At minute 0 each hour 9-16, Mon-Fri (ET)
     timeZone: 'America/New_York',
-    functionUrl: FUNCTION_URL,
+    // Use query params so the Cloud Function parses action/symbol without relying on JSON headers
+    functionUrl: `${FUNCTION_URL}?action=fetch-and-store&symbol=MSTR`,
     httpMethod: 'POST',
-    body: JSON.stringify({
-      action: 'fetch-and-store',
-      symbol: 'MSTR'
-    })
+    body: ''
   },
   {
     name: 'polygon-market-open',
@@ -102,7 +100,9 @@ async function setupSchedulers() {
             `--time-zone="${scheduler.timeZone}"`,
             `--uri="${scheduler.functionUrl}"`,
             `--http-method=${scheduler.httpMethod}`,
-            `--message-body='${scheduler.body}'`,
+            // Clear headers/body to ensure query-param based triggering
+            `--clear-headers`,
+            `--message-body=''`,
             `--description="${scheduler.description}"`
           ].join(' ');
           
@@ -121,7 +121,7 @@ async function setupSchedulers() {
             `--time-zone="${scheduler.timeZone}"`,
             `--uri="${scheduler.functionUrl}"`,
             `--http-method=${scheduler.httpMethod}`,
-            `--message-body='${scheduler.body}'`,
+            `--message-body=''`,
             `--description="${scheduler.description}"`
           ].join(' ');
           

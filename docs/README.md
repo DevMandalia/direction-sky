@@ -17,11 +17,16 @@ Direction Sky follows a **serverless-first** architecture with the following com
 - **Benefits**: Optimized for economic data patterns, fast access, powerful analytics
 
 ### 3. Application & API Layer (The Engine)
-- **Technology**: Google Cloud Functions + API Gateway
-- **Endpoints**:
-  - `GET /api/fred-data`: Serves real-time FRED data to frontend
-  - `POST /api/refresh-fred`: Manual FRED data refresh trigger
-  - `GET /api/historical-data`: Historical trend analysis
+- **Technology**: Google Cloud Functions + optional API Gateway
+- **Primary endpoints (Options UI)**:
+  - `GET /api/polygon-options/expiry-dates` → Available expiry dates from BigQuery
+  - `POST /api/polygon-options` → Runs parameterized BigQuery queries (returns rows)
+- **Function handlers (direct Cloud Functions)**:
+  - `polygon-options-fetcher` (entry: `polygonOptionsDataFetcher`)
+  - `polygon-health-check` (entry: `polygonHealthCheck`)
+  - `fred-fetcher` (entry: `fredDataFetcher`)
+  - `coinmarketcap-fetcher` (entry: `coinmarketcapDataFetcher`)
+  - `x-fetcher` (entry: `xDataFetcher`)
 - **Benefits**: Decoupled, scalable, organized logic
 
 ### 4. Frontend Layer (The Cockpit)
@@ -32,6 +37,8 @@ Direction Sky follows a **serverless-first** architecture with the following com
 ### 5. External Services
 - **FRED API**: Federal Reserve Economic Data (29+ economic indicators)
 - **X (Twitter) API**: Social sentiment analysis for Bitcoin and crypto markets
+- **Polygon.io**: Options chain, stock snapshots, supporting BigQuery storage
+- **CoinMarketCap**: Fear & Greed Index ingestion
 - **Google Cloud**: BigQuery, Cloud Functions, Cloud Scheduler
 - **Benefits**: Reliable data sources, managed infrastructure, comprehensive market intelligence
 

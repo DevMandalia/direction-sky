@@ -14,6 +14,7 @@ console.log('🚀 Deploying Polygon.io data ingestion functions to Google Cloud.
 const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || 'dev-epsilon-467101-v2';
 const REGION = process.env.GOOGLE_CLOUD_REGION || 'us-central1';
 const STAGE = process.env.STAGE || 'dev';
+const POLYGON_SECRET_NAME = process.env.POLYGON_SECRET_NAME || 'POLYGON_API_KEY';
 
 const FUNCTIONS = [
   {
@@ -70,13 +71,10 @@ async function deployFunctions() {
         `--allow-unauthenticated`,
         `--memory=512MB`,
         `--timeout=540s`,
-        `--set-env-vars=STAGE=${STAGE}`,
-        `--set-env-vars=GOOGLE_CLOUD_PROJECT=${PROJECT_ID}`,
-        `--set-env-vars=GOOGLE_CLOUD_REGION=${REGION}`,
-        `--set-env-vars=BIGQUERY_DATASET=direction_sky_data`,
-        `--set-env-vars=BIGQUERY_PROJECT_ID=${PROJECT_ID}`,
-        `--set-env-vars=GOOGLE_APPLICATION_CREDENTIALS=`,  // Empty value for default service account
-        `--set-env-vars=PROCESSING_LAYER_URL=${process.env.PROCESSING_LAYER_URL || 'https://your-processing-layer-url.com/api/ingest'}`
+        // Use set-env-vars only for non-secret config; do not overwrite console-set vars
+        `--set-env-vars=STAGE=${STAGE},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_REGION=${REGION},BIGQUERY_DATASET=direction_sky_data,BIGQUERY_PROJECT_ID=${PROJECT_ID},GOOGLE_APPLICATION_CREDENTIALS=,PROCESSING_LAYER_URL=${process.env.PROCESSING_LAYER_URL || 'https://your-processing-layer-url.com/api/ingest'}`,
+        // Bind POLYGON_API_KEY from Secret Manager so redeploys don't wipe it
+        `--set-secrets=POLYGON_API_KEY=${POLYGON_SECRET_NAME}:latest`
       ].join(' ');
 
       try {

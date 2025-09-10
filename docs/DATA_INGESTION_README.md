@@ -6,8 +6,14 @@ This directory contains the serverless data ingestion layer for the Direction Sk
 
 The data ingestion layer uses Google Cloud Functions with Cloud Scheduler:
 
-- **Scheduler**: Google Cloud Scheduler triggers the main data ingestion function every 5 minutes
-- **Functions**: Individual Cloud Functions for each data source (Glassnode, CoinGlass, FRED, Binance)
+- **Schedulers (current)**:
+  - Polygon options upsert: hourly during market hours, plus open/close jobs
+    - Jobs defined in `scripts/setup-polygon-scheduler.js`
+    - Names: `polygon-hourly-ingestion`, `polygon-market-open`, `polygon-market-close`
+  - CoinMarketCap Fear & Greed: daily at 00:00 UTC
+    - Job defined in `scripts/setup-coinmarketcap-scheduler.js` (name `coinmarketcap-daily`)
+  - FRED and X: examples provided in `scripts/deploy-all-functions.sh` (both hourly)
+- **Functions**: Individual Cloud Functions for each data source (FRED, X, Polygon, CoinMarketCap, Binance, Glassnode)
 - **API Client**: Centralized utility for making API calls with retry logic and error handling
 - **Data Flow**: Raw data is collected and sent to the Processing & Storage Layer
 
@@ -85,11 +91,17 @@ Required environment variables:
 ### 5. Deploy to Google Cloud
 
 ```bash
-# Deploy using the automated script
-npm run deploy:script
+# Deploy Polygon-related functions
+npm run deploy:polygon
 
-# Or deploy manually
-npm run deploy:all
+# Configure Polygon schedulers (hourly + open/close)
+npm run deploy:polygon-scheduler
+
+# Configure CoinMarketCap daily scheduler
+npm run deploy:coinmarketcap-scheduler
+
+# (Optional) Deploy all functions and example schedulers
+bash scripts/deploy-all-functions.sh
 ```
 
 ### 6. Monitor Logs
@@ -102,15 +114,17 @@ npm run logs
 ## Function Structure
 
 ### Main Orchestrator (`dataIngestion.ts`)
-- Coordinates all data sources
-- Runs every 5 minutes via Cloud Scheduler
-- Aggregates results and sends to processing layer
+- Coordinates FRED, X, Polygon (simulated aggregation for orchestration)
+- Exposed as `data-ingestion` function; no current 5-minute scheduler in scripts
+- Aggregates results and (simulated) sends to processing layer
 
 ### Individual Data Fetchers
-- `glassnodeDataFetcher.ts`: Fetches on-chain metrics
-- `coinglassDataFetcher.ts`: Fetches market data
 - `fredDataFetcher.ts`: Fetches economic indicators
-- `binanceDataFetcher.ts`: Fetches price and market data
+- `xDataFetcher.ts`: Fetches X sentiment
+- `polygonOptionsDataFetcher.ts`: Fetches/stores options and stock snapshots; exposes UI endpoints
+- `coinmarketcapDataFetcher.ts`: Fetches Fear & Greed index
+- `binanceDataFetcher.ts`: Price/market data (utility)
+- `glassnodeDataFetcher.ts`: On-chain metrics (utility)
 
 ### Utilities
 - `apiClient.ts`: Centralized API client with retry logic
@@ -118,10 +132,10 @@ npm run logs
 
 ## Data Flow
 
-1. **Scheduling**: Cloud Scheduler triggers `data-ingestion` function every 5 minutes
+1. **Scheduling**: Cloud Scheduler triggers specific functions on defined cadences (see Schedulers above)
 2. **Collection**: Each data source fetches data from their respective APIs
 3. **Processing**: Raw data is formatted and validated
-4. **Transmission**: Data is sent to the Processing & Storage Layer
+4. **Transmission**: Data is sent to the Processing & Storage Layer (or BigQuery directly)
 5. **Monitoring**: Logs and metrics are recorded for monitoring
 
 ## Error Handling
