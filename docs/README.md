@@ -27,12 +27,15 @@ Direction Sky follows a **serverless-first** architecture with the following com
   - `fred-fetcher` (entry: `fredDataFetcher`)
   - `coinmarketcap-fetcher` (entry: `coinmarketcapDataFetcher`)
   - `x-fetcher` (entry: `xDataFetcher`)
+  - `tradingview-webhook-receiver` (ingest TradingView alerts)
+  - `tradingview-alerts-api` (read API for alerts/stats)
 - **Benefits**: Decoupled, scalable, organized logic
 
 ### 4. Frontend Layer (The Cockpit)
 - **Technology**: Next.js + Tailwind CSS + Vercel
 - **Features**: Real-time economic dashboard, responsive design, modern UI
 - **Benefits**: Global CDN, automated deployments, excellent DX
+ - **Includes**: Trading Alerts tab powered by `NEXT_PUBLIC_TRADINGVIEW_API_URL`
 
 ### 5. External Services
 - **FRED API**: Federal Reserve Economic Data (29+ economic indicators)
@@ -40,6 +43,7 @@ Direction Sky follows a **serverless-first** architecture with the following com
 - **Polygon.io**: Options chain, stock snapshots, supporting BigQuery storage
 - **CoinMarketCap**: Fear & Greed Index ingestion
 - **Google Cloud**: BigQuery, Cloud Functions, Cloud Scheduler
+ - **TradingView**: Webhook alerts integration (see TradingView Webhook README)
 - **Benefits**: Reliable data sources, managed infrastructure, comprehensive market intelligence
 
 ## 📁 Project Structure
@@ -181,6 +185,7 @@ npm run init:database
 - ✅ TypeScript support
 - ✅ BigQuery data storage and analytics
 - ✅ Redis caching for performance
+- ✅ TradingView webhook ingestion + Alerts UI tab
 
 ### Data Sources
 - **FRED API**: Federal Reserve Economic Data
