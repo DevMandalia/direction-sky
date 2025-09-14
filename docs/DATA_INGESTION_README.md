@@ -19,7 +19,7 @@ The data ingestion layer uses Google Cloud Functions with Cloud Scheduler:
 
 ## Data Sources
 
-### 1. Glassnode (On-chain Data)
+### 1. Glassnode (On-chain Data) 
 - **API**: https://api.glassnode.com
 - **Metrics**: Active addresses, transaction count, network hash rate, exchange balance
 - **Frequency**: Every 5 minutes
@@ -42,6 +42,24 @@ The data ingestion layer uses Google Cloud Functions with Cloud Scheduler:
 - **Metrics**: 24hr ticker, klines/candlesticks, trades, order book depth
 - **Frequency**: Every 5 minutes
 - **Authentication**: Public API (no key required for basic data)
+
+### 5. CoinMarketCap (Sentiment - Fear & Greed Index)
+- **API**: https://pro-api.coinmarketcap.com/v1/tools/fear-greed-index
+- **Metrics**: Fear & Greed value (0–100), classification, time until update
+- **Frequency**: Daily at 00:00 UTC
+- **Authentication**: API key required (`X-CMC_PRO_API_KEY`)
+
+### 6. Polygon (Options & Equities)
+- **API**: https://api.polygon.io
+- **Metrics**: Options chain snapshots (calls/puts, strikes, expiries), underlying stock snapshots/prices
+- **Frequency**: Hourly during market hours, plus market open/close jobs
+- **Authentication**: API key required
+
+### 7. X (Twitter) Sentiment
+- **API**: https://developer.twitter.com/
+- **Metrics**: Keyword/account tweet counts, sentiment scores, engagement (likes/retweets/replies), top tweets, keyword analysis
+- **Frequency**: Hourly (example scheduler)
+- **Authentication**: API key, API secret, Bearer token
 
 ## Setup Instructions
 
@@ -86,6 +104,11 @@ Required environment variables:
 - `FRED_API_KEY`: Your FRED API key
 - `BINANCE_API_KEY`: Your Binance API key (optional for basic data)
 - `BINANCE_SECRET_KEY`: Your Binance secret key (optional for basic data)
+- `COINMARKETCAP_API_KEY`: Your CoinMarketCap API key
+- `POLYGON_API_KEY`: Your Polygon API key
+- `X_API_KEY`: Your X (Twitter) API key
+- `X_API_SECRET`: Your X (Twitter) API secret
+- `X_BEARER_TOKEN`: Your X (Twitter) Bearer token
 - `PROCESSING_LAYER_URL`: URL of your processing layer endpoint
 
 ### 5. Deploy to Google Cloud
@@ -114,15 +137,15 @@ npm run logs
 ## Function Structure
 
 ### Main Orchestrator (`dataIngestion.ts`)
-- Coordinates FRED, X, Polygon (simulated aggregation for orchestration)
-- Exposed as `data-ingestion` function; no current 5-minute scheduler in scripts
-- Aggregates results and (simulated) sends to processing layer
+- Optional aggregate orchestrator for ad-hoc/manual aggregation across FRED, X, and Polygon
+- Deployed as `data-ingestion`; not scheduled by default (no Cloud Scheduler job attached)
+- Useful for manual tests or batch triggers; production scheduling uses source-specific functions below
 
-### Individual Data Fetchers
-- `fredDataFetcher.ts`: Fetches economic indicators
-- `xDataFetcher.ts`: Fetches X sentiment
-- `polygonOptionsDataFetcher.ts`: Fetches/stores options and stock snapshots; exposes UI endpoints
-- `coinmarketcapDataFetcher.ts`: Fetches Fear & Greed index
+### Individual Data Fetchers (Scheduled per source)
+- `fredDataFetcher.ts`: Fetches economic indicators (hourly scheduler)
+- `xDataFetcher.ts`: Fetches X sentiment (hourly scheduler)
+- `polygonOptionsDataFetcher.ts`: Fetches/stores options and stock snapshots; exposes UI endpoints (hourly + market open/close schedulers)
+- `coinmarketcapDataFetcher.ts`: Fetches Fear & Greed index (daily scheduler at 00:00 UTC)
 - `binanceDataFetcher.ts`: Price/market data (utility)
 - `glassnodeDataFetcher.ts`: On-chain metrics (utility)
 
@@ -215,6 +238,9 @@ For detailed API documentation for each data source:
 - [CoinGlass API](https://coinglass.com/api)
 - [FRED API](https://fred.stlouisfed.org/docs/api/)
 - [Binance API](https://binance-docs.github.io/apidocs/spot/en/)
+- [CoinMarketCap API](https://coinmarketcap.com/api/documentation/v1/)
+- [Polygon API](https://polygon.io/docs)
+- [X (Twitter) API](https://developer.twitter.com/en/docs/twitter-api)
 
 ## Migration from AWS
 
