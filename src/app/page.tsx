@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import dynamic from 'next/dynamic'
 import { format, parseISO, isValid as isValidDate } from 'date-fns'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -44,6 +45,7 @@ const BIGQUERY_API_BASE = process.env.NEXT_PUBLIC_BIGQUERY_API_BASE
 const API_KEY = process.env.NEXT_PUBLIC_BIGQUERY_API_KEY
 
 export default function OptionsChain() {
+  const [activeTab, setActiveTab] = useState<'options' | 'alerts'>('options')
   const [optionsData, setOptionsData] = useState<OptionsData[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -604,7 +606,7 @@ export default function OptionsChain() {
     </>
   ))
 
-  if (loading && optionsData.length === 0) {
+  if (loading && optionsData.length === 0 && activeTab === 'options') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-900">
         <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500"></div>
@@ -620,20 +622,35 @@ export default function OptionsChain() {
           <div className="flex justify-between items-center py-4">
             <div className="flex items-center space-x-3">
               <img src="/rocket.svg" alt="Direction Sky rocketship logo" className="w-8 h-8" />
-              <h1 className="text-xl font-bold">Direction Sky Options</h1>
+              <h1 className="text-xl font-bold">Direction Sky</h1>
             </div>
-            <div className="flex items-center space-x-4">
-              <div className="text-sm text-gray-300">
-                <span className="text-green-400">{underlyingAsset ? underlyingAsset.toUpperCase() : 'MSTR'}</span>
-                <span className="ml-2">${optionsData[0]?.underlying_price?.toFixed(2) || '0.00'}</span>
-              </div>
+          </div>
+          {/* Tabs */}
+          <div className="pb-4">
+            <div className="flex space-x-1 bg-gray-800 p-1 rounded-lg w-fit">
+              <button
+                onClick={() => setActiveTab('options')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'options' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                aria-selected={activeTab === 'options'}
+                role="tab"
+              >
+                Options Data
+              </button>
+              <button
+                onClick={() => setActiveTab('alerts')}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === 'alerts' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                aria-selected={activeTab === 'alerts'}
+                role="tab"
+              >
+                Trading Alerts
+              </button>
             </div>
           </div>
         </div>
       </header>
 
       {/* Error Display */}
-      {error && (
+      {activeTab === 'options' && error && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="bg-red-900/20 border border-red-700 rounded-lg p-4">
             <div className="flex items-center space-x-2">
@@ -652,12 +669,13 @@ export default function OptionsChain() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6" aria-busy={loading}>
-        {loading && (
+        {activeTab === 'options' && loading && (
           <div className="mb-3 h-1 w-full bg-gray-700/70 rounded overflow-hidden">
             <div className="h-1 w-1/3 bg-blue-500 animate-pulse"></div>
           </div>
         )}
-        {/* Toolbar */}
+        {/* Options Toolbar */}
+        {activeTab === 'options' && (
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
 
           <div className="flex items-center gap-2" role="tablist" aria-label="Option type tabs">
@@ -723,7 +741,9 @@ export default function OptionsChain() {
             </button>
           </div>
         </div>
-        {/* Controls */}
+        )}
+        {/* Options Controls */}
+        {activeTab === 'options' && (
         <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 mb-6 items-end">
           {/* Strike range */}
           <div className="max-w-56 w-56">
@@ -809,10 +829,12 @@ export default function OptionsChain() {
             </button>
           </div>
         </div>
+        )}
 
         {/* Filters are shown inline above; removed toggle section */}
 
         {/* Options List (Score Desc) */}
+        {activeTab === 'options' && (
         <div className="bg-gray-800 rounded-lg border border-gray-700 relative">
           <div className="border-b border-gray-700 p-4">
             <h2 className="text-lg font-semibold flex items-center justify-between">
@@ -923,8 +945,10 @@ export default function OptionsChain() {
             </div>
           )}
         </div>
+        )}
 
         {/* Greeks Info */}
+        {activeTab === 'options' && (
         <div className="mt-6 bg-gray-800 rounded-lg border border-gray-700 p-4">
           <h3 className="text-lg font-semibold mb-4">Greeks & Risk Metrics</h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
@@ -950,7 +974,20 @@ export default function OptionsChain() {
             </div>
           </div>
         </div>
+        )}
+
+        {/* Alerts Tab Content */}
+        {activeTab === 'alerts' && (
+          <AlertsTabLazy />
+        )}
       </main>
     </div>
   )
 } 
+
+const AlertsTabLazy = dynamic(() => import('./components/alerts/AlertsTab').then(m => m.AlertsTab), {
+  ssr: false,
+  loading: () => (
+    <div className="text-white">Loading alerts...</div>
+  )
+})

@@ -8,8 +8,10 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Inject public env at build time so client code has the correct API base
 ARG NEXT_PUBLIC_BIGQUERY_API_BASE
 ARG NEXT_PUBLIC_BIGQUERY_API_KEY
+ARG NEXT_PUBLIC_TRADINGVIEW_API_URL
 ENV NEXT_PUBLIC_BIGQUERY_API_BASE=${NEXT_PUBLIC_BIGQUERY_API_BASE:-https://us-central1-dev-epsilon-467101-v2.cloudfunctions.net/polygon-options-fetcher}
 ENV NEXT_PUBLIC_BIGQUERY_API_KEY=${NEXT_PUBLIC_BIGQUERY_API_KEY}
+ENV NEXT_PUBLIC_TRADINGVIEW_API_URL=${NEXT_PUBLIC_TRADINGVIEW_API_URL:-https://us-central1-dev-epsilon-467101-v2.cloudfunctions.net/tradingview-alerts-api}
 RUN npm run build
 
 # Run stage
@@ -20,6 +22,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Also set at runtime (not strictly needed for client, but safe for any server components)
 ENV NEXT_PUBLIC_BIGQUERY_API_BASE=${NEXT_PUBLIC_BIGQUERY_API_BASE}
 ENV NEXT_PUBLIC_BIGQUERY_API_KEY=${NEXT_PUBLIC_BIGQUERY_API_KEY}
+ENV NEXT_PUBLIC_TRADINGVIEW_API_URL=${NEXT_PUBLIC_TRADINGVIEW_API_URL}
 # Use Next.js standalone output
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static

@@ -92,9 +92,30 @@ print_status "Enabling required Google Cloud APIs..."
 gcloud services enable cloudfunctions.googleapis.com
 gcloud services enable cloudscheduler.googleapis.com
 gcloud services enable cloudbuild.googleapis.com
+gcloud services enable bigquery.googleapis.com
+gcloud services enable redis.googleapis.com
 
 # Set environment variables for Cloud Functions
-ENV_VARS="GLASSNODE_API_KEY=${GLASSNODE_API_KEY:-your_glassnode_api_key_here},COINGLASS_API_KEY=${COINGLASS_API_KEY:-your_coinglass_api_key_here},FRED_API_KEY=${FRED_API_KEY:-your_fred_api_key_here},BINANCE_API_KEY=${BINANCE_API_KEY:-your_binance_api_key_here},BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY:-your_binance_secret_key_here},COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY:-your_coinmarketcap_api_key_here},POLYGON_API_KEY=${POLYGON_API_KEY:-your_polygon_api_key_here},PROCESSING_LAYER_URL=${PROCESSING_LAYER_URL:-https://your-processing-layer-url.com/api/ingest},X_API_KEY=${X_API_KEY:-your_twitter_api_key_here},X_API_SECRET=${X_API_SECRET:-your_twitter_api_secret_here},X_BEARER_TOKEN=${X_BEARER_TOKEN:-your_twitter_bearer_token_here},X_MAX_ACCOUNTS=${X_MAX_ACCOUNTS:-23},LOG_EXECUTION_ID=true"
+ENV_VARS="GLASSNODE_API_KEY=${GLASSNODE_API_KEY:-your_glassnode_api_key_here},COINGLASS_API_KEY=${COINGLASS_API_KEY:-your_coinglass_api_key_here},FRED_API_KEY=${FRED_API_KEY:-your_fred_api_key_here},BINANCE_API_KEY=${BINANCE_API_KEY:-your_binance_api_key_here},BINANCE_SECRET_KEY=${BINANCE_SECRET_KEY:-your_binance_secret_key_here},COINMARKETCAP_API_KEY=${COINMARKETCAP_API_KEY:-your_coinmarketcap_api_key_here},POLYGON_API_KEY=${POLYGON_API_KEY:-your_polygon_api_key_here},PROCESSING_LAYER_URL=${PROCESSING_LAYER_URL:-https://your-processing-layer-url.com/api/ingest},X_API_KEY=${X_API_KEY:-your_twitter_api_key_here},X_API_SECRET=${X_API_SECRET:-your_twitter_api_secret_here},X_BEARER_TOKEN=${X_BEARER_TOKEN:-your_twitter_bearer_token_here},X_MAX_ACCOUNTS=${X_MAX_ACCOUNTS:-23},LOG_EXECUTION_ID=true,BIGQUERY_DATASET=${BIGQUERY_DATASET:-direction_sky_data},REDIS_URL=${REDIS_URL:-redis://localhost:6379},TRADINGVIEW_WEBHOOK_SECRET=${TRADINGVIEW_WEBHOOK_SECRET:-},TRADINGVIEW_RATE_LIMIT_ENABLED=${TRADINGVIEW_RATE_LIMIT_ENABLED:-true},TRADINGVIEW_SIGNATURE_VALIDATION=${TRADINGVIEW_SIGNATURE_VALIDATION:-false}"
+
+# Ensure BigQuery dataset and table for TradingView exist
+print_status "Setting up TradingView BigQuery table if missing..."
+if ! bq ls $PROJECT_ID:$BIGQUERY_DATASET >/dev/null 2>&1; then
+    print_status "Creating dataset $BIGQUERY_DATASET in project $PROJECT_ID"
+    bq --location=US mk -d --dataset_id=$PROJECT_ID:$BIGQUERY_DATASET || true
+fi
+
+if ! bq ls $PROJECT_ID:$BIGQUERY_DATASET | grep -q "tradingview_alerts"; then
+    print_status "Creating table tradingview_alerts"
+    # Use repo-standard schema location; substitute dataset if different
+    if [ "$BIGQUERY_DATASET" != "direction_sky_data" ]; then
+        sed "s/direction_sky_data\\.tradingview_alerts/${BIGQUERY_DATASET}.tradingview_alerts/g" scripts/setup-tradingview-alerts.sql | bq query --use_legacy_sql=false || true
+    else
+        bq query --use_legacy_sql=false < scripts/setup-tradingview-alerts.sql || true
+    fi
+else
+    print_status "BigQuery table tradingview_alerts already exists"
+fi
 
 # Delete failed functions first
 print_status "Cleaning up failed functions..."
@@ -236,6 +257,48 @@ gcloud functions deploy polygon-health-check \
     --set-env-vars $ENV_VARS \
     --memory 128MB \
     --timeout 60s
+
+# Deploy TradingView webhook receiver
+print_status "Deploying tradingview-webhook-receiver function..."
+gcloud functions deploy tradingview-webhook-receiver \
+    --runtime nodejs24 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --region $REGION \
+    --project $PROJECT_ID \
+    --source src/functions \
+    --entry-point tradingviewWebhookReceiver \
+    --set-env-vars $ENV_VARS \
+    --memory 256MB \
+    --timeout 60s
+
+# Deploy TradingView alerts API
+print_status "Deploying tradingview-alerts-api function..."
+gcloud functions deploy tradingview-alerts-api \
+    --runtime nodejs24 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --region $REGION \
+    --project $PROJECT_ID \
+    --source src/functions \
+    --entry-point tradingviewAlertsApi \
+    --set-env-vars $ENV_VARS \
+    --memory 512MB \
+    --timeout 60s
+
+# Deploy TradingView health check
+print_status "Deploying tradingview-health-check function..."
+gcloud functions deploy tradingview-health-check \
+    --runtime nodejs24 \
+    --trigger-http \
+    --allow-unauthenticated \
+    --region $REGION \
+    --project $PROJECT_ID \
+    --source src/functions \
+    --entry-point tradingviewHealthCheck \
+    --set-env-vars $ENV_VARS \
+    --memory 128MB \
+    --timeout 30s
 
 # Deploy X data fetcher function
 print_status "Deploying x-fetcher function..."

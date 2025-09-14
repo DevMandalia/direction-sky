@@ -61,6 +61,18 @@ The data ingestion layer uses Google Cloud Functions with Cloud Scheduler:
 - **Frequency**: Hourly (example scheduler)
 - **Authentication**: API key, API secret, Bearer token
 
+### 8. TradingView Webhooks (Alerts)
+- **Ingress**: TradingView sends webhooks to a Google Cloud Function
+- **Endpoints**:
+  - Webhook receiver (ingest): `tradingview-webhook-receiver`
+  - Alerts API (read): `tradingview-alerts-api`
+  - Health: `tradingview-health-check`
+- **Storage**: BigQuery table `direction_sky_data.tradingview_alerts` (created by `scripts/setup-tradingview-alerts.sql`)
+- **Payloads**: JSON or plain text (key:value / key=value). Plain text is parsed; full text is stored in `alert_message`.
+- **Security**: IP allowlist for TradingView source IPs; HTTPS only; optional signature validation
+- **Frontend**: Set `NEXT_PUBLIC_TRADINGVIEW_API_URL` to the Alerts API URL to power the Alerts tab UI
+- See the full guide: `docs/TRADINGVIEW_WEBHOOK_README.md`
+
 ## Setup Instructions
 
 ### 1. Install Dependencies
@@ -125,6 +137,15 @@ npm run deploy:coinmarketcap-scheduler
 
 # (Optional) Deploy all functions and example schedulers
 bash scripts/deploy-all-functions.sh
+
+# Deploy/Update TradingView functions (if needed)
+gcloud functions deploy tradingview-webhook-receiver \
+  --runtime nodejs24 --trigger-http --allow-unauthenticated \
+  --region=us-central1 --source=src/functions --entry-point=tradingviewWebhookReceiver
+
+gcloud functions deploy tradingview-alerts-api \
+  --runtime nodejs24 --trigger-http --allow-unauthenticated \
+  --region=us-central1 --source=src/functions --entry-point=tradingviewAlertsApi
 ```
 
 ### 6. Monitor Logs
