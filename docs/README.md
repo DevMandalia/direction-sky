@@ -197,6 +197,21 @@ npm run init:database
   - Influential account sentiment analysis
   - Engagement metrics (likes, retweets, replies)
   - Real-time sentiment scoring and classification
+- **Polygon.io**: Options & Equities
+  - Options chain snapshots (calls/puts, strikes, expiries)
+  - Underlying stock snapshots/prices
+  - BigQuery-powered querying for the Options UI
+- **CoinMarketCap**: Sentiment (Fear & Greed Index)
+  - Daily Fear & Greed value, classification
+- **CoinGlass**: Market Data
+  - Funding rates, open interest, long/short ratio, liquidations
+- **Binance**: Price & Market Data
+  - 24h ticker, klines/candlesticks, trades, order book depth
+- **Glassnode**: On-chain Metrics
+  - Active addresses, transactions, exchange balances, hash rate
+- **TradingView Webhooks**: Alerts Ingestion
+  - Webhook-driven trading alerts stored in BigQuery
+  - Read API for Alerts tab (filters, pagination, stats)
 
 ### Planned Features
 - 🔄 Live price charts with TradingView integration
